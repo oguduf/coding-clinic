@@ -1,0 +1,12 @@
+aws_region              = "us-east-1"
+name_prefix             = "clinic-dev"
+vpc_cidr                = "10.10.0.0/16"
+availability_zone_count = 2
+availability_zone_names = null
+subnet_newbits          = 4
+endpoint_trusted_cidrs  = null
+tags = {
+  Owner      = "platform-team"
+  CostCenter = "engineering-lab"
+}
+

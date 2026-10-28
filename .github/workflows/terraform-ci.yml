@@ -1,0 +1,66 @@
+name: Terraform CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Format, validate, lint, scan, and test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive
+
+      - name: Initialize and validate module
+        working-directory: modules/vpc
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: Run mocked Terraform tests
+        working-directory: modules/vpc
+        run: terraform test -no-color
+
+      - name: Initialize and validate environment examples
+        shell: bash
+        run: |
+          for environment in dev stage prod; do
+            terraform -chdir="environments/${environment}" init -backend=false -input=false
+            terraform -chdir="environments/${environment}" validate
+          done
+
+      - name: Install TFLint
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: v0.64.0
+
+      - name: Run TFLint
+        run: |
+          tflint --init
+          tflint --recursive
+
+      - name: Install Checkov
+        run: python -m pip install --disable-pip-version-check 'checkov==3.2.495'
+
+      - name: Run Checkov static scan
+        run: checkov --directory modules/vpc --framework terraform --quiet --soft-fail
+

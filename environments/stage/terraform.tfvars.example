@@ -1,0 +1,12 @@
+aws_region              = "us-west-2"
+name_prefix             = "clinic-stage"
+vpc_cidr                = "10.20.0.0/16"
+availability_zone_count = 3
+availability_zone_names = null
+subnet_newbits          = 4
+endpoint_trusted_cidrs  = null
+tags = {
+  Owner      = "platform-team"
+  CostCenter = "engineering-lab"
+}
+
