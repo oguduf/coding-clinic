@@ -1,0 +1,12 @@
+---
+- name: Ensure RHEL sshd_config includes managed drop-ins
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^Include\s+/etc/ssh/sshd_config\.d/\*\.conf\s*$'
+    line: 'Include /etc/ssh/sshd_config.d/*.conf'
+    insertbefore: BOF
+    owner: root
+    group: root
+    mode: '0600'
+    backup: true
+  notify: Reload SSH service

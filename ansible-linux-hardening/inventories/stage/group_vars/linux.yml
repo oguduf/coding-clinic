@@ -1,0 +1,14 @@
+---
+ssh_hardening_admin_user: ansible_admin
+ssh_hardening_password_authentication: true
+ssh_hardening_key_access_verified: false
+ssh_hardening_allow_tcp_forwarding: false
+fail2ban_enabled: true
+fail2ban_bantime: 3600
+fail2ban_findtime: 600
+fail2ban_maxretry: 5
+fail2ban_rhel_repository_ready: false
+security_updates_enabled: true
+security_updates_security_only: true
+security_updates_auto_reboot: false
+security_updates_schedule: daily

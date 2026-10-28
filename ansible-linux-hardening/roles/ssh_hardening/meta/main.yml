@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  role_name: ssh_hardening
+  author: Code Clinic
+  description: Safely applies an SSH server baseline to supported Ubuntu and RHEL systems.
+  license: MIT
+  min_ansible_version: '2.16'
+  platforms:
+    - name: Ubuntu
+      versions: [jammy, noble]
+    - name: EL
+      versions: ['8', '9']
+dependencies: []

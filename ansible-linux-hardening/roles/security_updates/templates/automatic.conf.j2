@@ -1,0 +1,15 @@
+# Managed by Ansible role security_updates. Updates are security-only by default.
+[commands]
+upgrade_type = {{ 'security' if security_updates_security_only | bool else 'default' }}
+random_sleep = 0
+download_updates = yes
+apply_updates = yes
+reboot = {{ 'when-needed' if security_updates_auto_reboot | bool else 'never' }}
+reboot_command = shutdown -r +5
+
+[emitters]
+emit_via = stdio
+
+[base]
+debuglevel = 1
+

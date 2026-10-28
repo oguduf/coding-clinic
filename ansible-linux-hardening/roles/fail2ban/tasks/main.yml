@@ -1,0 +1,71 @@
+---
+- name: Validate Fail2ban policy inputs
+  ansible.builtin.assert:
+    that:
+      - fail2ban_bantime | int > 0
+      - fail2ban_findtime | int > 0
+      - fail2ban_maxretry | int > 0
+      - fail2ban_ignoreip | length > 0
+      - "'0.0.0.0/0' not in fail2ban_ignoreip"
+      - "'::/0' not in fail2ban_ignoreip"
+    fail_msg: "Fail2ban durations/retry counts must be positive; never trust an unrestricted CIDR."
+  when: fail2ban_enabled | bool
+- name: Require an explicitly prepared package source for RHEL Fail2ban
+  ansible.builtin.assert:
+    that:
+      - fail2ban_rhel_repository_ready | bool
+    fail_msg: >-
+      Fail2ban is not enabled by a default RHEL repository on every supported
+      installation. Configure an approved package source, then explicitly set
+      fail2ban_rhel_repository_ready=true.
+  when:
+    - fail2ban_enabled | bool
+    - ansible_facts.distribution == "RedHat"
+- name: Configure Fail2ban on Ubuntu
+  ansible.builtin.include_tasks: ubuntu.yml
+  when:
+    - fail2ban_enabled | bool
+    - ansible_facts.distribution == "Ubuntu"
+- name: Configure Fail2ban on RHEL
+  ansible.builtin.include_tasks: rhel.yml
+  when:
+    - fail2ban_enabled | bool
+    - ansible_facts.distribution == "RedHat"
+- name: Write managed SSH jail configuration
+  ansible.builtin.template:
+    src: jail.local.j2
+    dest: /etc/fail2ban/jail.d/00-ansible-sshd.local
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart Fail2ban
+  when: fail2ban_enabled | bool
+- name: Validate Fail2ban configuration before enabling its service
+  ansible.builtin.command:
+    argv:
+      - fail2ban-client
+      - -t
+  changed_when: false
+  when: fail2ban_enabled | bool
+- name: Enable and start Fail2ban
+  ansible.builtin.service:
+    name: "{{ fail2ban_service_name }}"
+    state: started
+    enabled: true
+  when: fail2ban_enabled | bool
+- name: Gather services when Fail2ban is disabled
+  ansible.builtin.service_facts:
+  when: not (fail2ban_enabled | bool)
+- name: Stop and disable an existing Fail2ban service when disabled
+  ansible.builtin.systemd_service:
+    name: "{{ fail2ban_service_name }}"
+    state: stopped
+    enabled: false
+  when:
+    - not (fail2ban_enabled | bool)
+    - (fail2ban_service_name ~ '.service') in ansible_facts.services
+- name: Remove only the Fail2ban jail file managed by this role when disabled
+  ansible.builtin.file:
+    path: /etc/fail2ban/jail.d/00-ansible-sshd.local
+    state: absent
+  when: not (fail2ban_enabled | bool)
