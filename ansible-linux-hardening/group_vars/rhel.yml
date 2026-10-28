@@ -7,4 +7,3 @@ security_updates_rhel_competing_timers:
   - dnf-automatic.timer
   - dnf-automatic-download.timer
   - dnf-automatic-notifyonly.timer
-

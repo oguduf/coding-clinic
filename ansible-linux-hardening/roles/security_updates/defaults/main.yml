@@ -12,4 +12,3 @@ security_updates_rhel_competing_timers:
   - dnf-automatic-download.timer
   - dnf-automatic-notifyonly.timer
 security_updates_rhel_timer_time: '03:00:00'
-

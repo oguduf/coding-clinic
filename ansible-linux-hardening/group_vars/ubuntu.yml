@@ -5,4 +5,3 @@ security_updates_ubuntu_origins:
   - '${distro_id}:${distro_codename}-security'
   - '${distro_id}ESMApps:${distro_codename}-apps-security'
   - '${distro_id}ESM:${distro_codename}-infra-security'
-

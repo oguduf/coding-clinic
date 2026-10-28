@@ -8,4 +8,3 @@ fail2ban_ignoreip:
   - ::1
 fail2ban_service_name: fail2ban
 fail2ban_rhel_repository_ready: false
-

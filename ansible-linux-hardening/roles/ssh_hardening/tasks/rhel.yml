@@ -10,4 +10,3 @@
     mode: '0600'
     backup: true
   notify: Reload SSH service
-

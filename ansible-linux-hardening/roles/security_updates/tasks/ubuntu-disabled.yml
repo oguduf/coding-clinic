@@ -7,4 +7,3 @@
     group: root
     mode: '0644'
   notify: Restart apt-daily-upgrade timer
-

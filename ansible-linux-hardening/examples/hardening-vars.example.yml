@@ -2,13 +2,11 @@
 # Copy these values into an approved environment's inventory or group_vars.
 # Keep hardening_approved false until change approval and host scoping are complete.
 hardening_approved: false
-
 ssh_hardening_admin_user: platform_admin
 ssh_hardening_password_authentication: true
 ssh_hardening_key_access_verified: false
 ssh_hardening_allow_tcp_forwarding: false
 ssh_hardening_allow_users: []
-
 fail2ban_enabled: true
 fail2ban_bantime: 3600
 fail2ban_findtime: 600
@@ -19,10 +17,8 @@ fail2ban_ignoreip:
 # On RHEL, set true only after the approved repository owner has made fail2ban
 # available through an approved, supportable package source.
 fail2ban_rhel_repository_ready: false
-
 security_updates_enabled: true
 security_updates_security_only: true
 security_updates_auto_reboot: false
 security_updates_auto_reboot_time: '03:00'
 security_updates_schedule: daily
-

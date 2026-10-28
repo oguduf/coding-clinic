@@ -1,13 +1,10 @@
 name: Ansible CI
-
 on:
   pull_request:
   push:
     branches: [main]
-
 permissions:
   contents: read
-
 jobs:
   validate:
     name: Lint, syntax-check, and test offline
@@ -20,19 +17,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
       - name: Install validation dependencies
         run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
-
       - name: Validate YAML
         run: yamllint . ../.github/workflows/ansible-ci.yml
-
       - name: Run Ansible lint
         run: ansible-lint
-
       - name: Check playbook syntax with documentation-only inventory
         run: ansible-playbook -i inventories/dev/hosts.yml playbooks/harden-linux.yml --syntax-check
-
       - name: Run offline configuration tests
         run: pytest -q
-

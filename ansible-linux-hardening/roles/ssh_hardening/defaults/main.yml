@@ -14,4 +14,3 @@ ssh_hardening_validation_addr: 127.0.0.1
 ssh_hardening_sshd_binary: /usr/sbin/sshd
 ssh_hardening_config_dir: /etc/ssh/sshd_config.d
 ssh_hardening_service_name: sshd
-

@@ -4,4 +4,3 @@
     that:
       - ssh_hardening_config_dir == "/etc/ssh/sshd_config.d"
     fail_msg: "Ubuntu role expects the supported OpenSSH sshd_config.d drop-in path."
-

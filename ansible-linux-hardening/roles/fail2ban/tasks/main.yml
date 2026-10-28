@@ -10,7 +10,6 @@
       - "'::/0' not in fail2ban_ignoreip"
     fail_msg: "Fail2ban durations/retry counts must be positive; never trust an unrestricted CIDR."
   when: fail2ban_enabled | bool
-
 - name: Require an explicitly prepared package source for RHEL Fail2ban
   ansible.builtin.assert:
     that:
@@ -22,19 +21,16 @@
   when:
     - fail2ban_enabled | bool
     - ansible_facts.distribution == "RedHat"
-
 - name: Configure Fail2ban on Ubuntu
   ansible.builtin.include_tasks: ubuntu.yml
   when:
     - fail2ban_enabled | bool
     - ansible_facts.distribution == "Ubuntu"
-
 - name: Configure Fail2ban on RHEL
   ansible.builtin.include_tasks: rhel.yml
   when:
     - fail2ban_enabled | bool
     - ansible_facts.distribution == "RedHat"
-
 - name: Write managed SSH jail configuration
   ansible.builtin.template:
     src: jail.local.j2
@@ -44,7 +40,6 @@
     mode: '0644'
   notify: Restart Fail2ban
   when: fail2ban_enabled | bool
-
 - name: Validate Fail2ban configuration before enabling its service
   ansible.builtin.command:
     argv:
@@ -52,18 +47,15 @@
       - -t
   changed_when: false
   when: fail2ban_enabled | bool
-
 - name: Enable and start Fail2ban
   ansible.builtin.service:
     name: "{{ fail2ban_service_name }}"
     state: started
     enabled: true
   when: fail2ban_enabled | bool
-
 - name: Gather services when Fail2ban is disabled
   ansible.builtin.service_facts:
   when: not (fail2ban_enabled | bool)
-
 - name: Stop and disable an existing Fail2ban service when disabled
   ansible.builtin.systemd_service:
     name: "{{ fail2ban_service_name }}"
@@ -72,10 +64,8 @@
   when:
     - not (fail2ban_enabled | bool)
     - (fail2ban_service_name ~ '.service') in ansible_facts.services
-
 - name: Remove only the Fail2ban jail file managed by this role when disabled
   ansible.builtin.file:
     path: /etc/fail2ban/jail.d/00-ansible-sshd.local
     state: absent
   when: not (fail2ban_enabled | bool)
-

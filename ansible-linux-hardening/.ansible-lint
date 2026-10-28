@@ -3,4 +3,3 @@ offline: true
 exclude_paths:
   - .git/
   - .venv/
-

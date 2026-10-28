@@ -7,7 +7,6 @@
   any_errors_fatal: true
   vars_files:
     - ../group_vars/all.yml
-
   pre_tasks:
     - name: Require explicit change approval before connecting to managed hosts
       ansible.builtin.assert:
@@ -20,23 +19,19 @@
       become: false
       run_once: true
       tags: [always]
-
     - name: Gather target facts after approval
       ansible.builtin.setup:
       tags: [always]
-
     - name: Load Ubuntu-specific configuration
       ansible.builtin.include_vars:
         file: ../group_vars/ubuntu.yml
       when: ansible_facts.distribution == "Ubuntu"
       tags: [always]
-
     - name: Load RHEL-specific configuration
       ansible.builtin.include_vars:
         file: ../group_vars/rhel.yml
       when: ansible_facts.distribution == "RedHat"
       tags: [always]
-
     - name: Reject unsupported operating systems and service managers
       ansible.builtin.assert:
         that:
@@ -53,7 +48,6 @@
           Detected {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}
           using {{ ansible_facts.service_mgr }}.
       tags: [always]
-
     - name: Validate environment policy prerequisites before any role changes
       ansible.builtin.assert:
         that:
@@ -66,12 +60,14 @@
             fail2ban_maxretry | int > 0 and fail2ban_ignoreip | length > 0 and
             '0.0.0.0/0' not in fail2ban_ignoreip and '::/0' not in fail2ban_ignoreip)
           - not (security_updates_enabled | bool) or security_updates_schedule in ['daily', 'weekly']
-          - not (security_updates_enabled | bool) or security_updates_auto_reboot_time is match('^([01][0-9]|2[0-3]):[0-5][0-9]$')
+          - >-
+            not (security_updates_enabled | bool) or
+            (security_updates_auto_reboot_time is
+            match('^([01][0-9]|2[0-3]):[0-5][0-9]$'))
         fail_msg: >-
           Review environment policy inputs. RHEL Fail2ban requires an approved
           package source, and update schedule/time values must be valid.
       tags: [always]
-
   roles:
     - role: ssh_hardening
       tags: [ssh, security]
@@ -79,4 +75,3 @@
       tags: [fail2ban, security]
     - role: security_updates
       tags: [updates, security]
-

@@ -12,4 +12,3 @@ security_updates_enabled: true
 security_updates_security_only: true
 security_updates_auto_reboot: false
 security_updates_schedule: daily
-

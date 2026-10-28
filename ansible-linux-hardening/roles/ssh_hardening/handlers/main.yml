@@ -3,4 +3,3 @@
   ansible.builtin.service:
     name: "{{ ssh_hardening_service_name }}"
     state: reloaded
-

@@ -14,4 +14,3 @@ all:
           hosts:
             rhel-example:
               ansible_host: 198.51.100.10
-

@@ -6,28 +6,23 @@
       - security_updates_auto_reboot_time is match('^([01][0-9]|2[0-3]):[0-5][0-9]$')
     fail_msg: "Automatic update schedule must be daily/weekly and reboot time must be HH:MM."
   when: security_updates_enabled | bool
-
 - name: Configure Ubuntu automatic security updates
   ansible.builtin.include_tasks: ubuntu.yml
   when:
     - security_updates_enabled | bool
     - ansible_facts.distribution == "Ubuntu"
-
 - name: Configure RHEL automatic security updates
   ansible.builtin.include_tasks: rhel.yml
   when:
     - security_updates_enabled | bool
     - ansible_facts.distribution == "RedHat"
-
 - name: Disable Ubuntu unattended security upgrade scheduling
   ansible.builtin.include_tasks: ubuntu-disabled.yml
   when:
     - not (security_updates_enabled | bool)
     - ansible_facts.distribution == "Ubuntu"
-
 - name: Disable existing RHEL automatic update timers
   ansible.builtin.include_tasks: rhel-disabled.yml
   when:
     - not (security_updates_enabled | bool)
     - ansible_facts.distribution == "RedHat"
-
