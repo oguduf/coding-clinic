@@ -1,0 +1,13 @@
+# Managed by Ansible role fail2ban. Package defaults remain untouched.
+[DEFAULT]
+bantime = {{ fail2ban_bantime }}
+findtime = {{ fail2ban_findtime }}
+maxretry = {{ fail2ban_maxretry }}
+ignoreip = {{ fail2ban_ignoreip | join(' ') }}
+backend = systemd
+
+[sshd]
+enabled = true
+port = ssh
+backend = systemd
+

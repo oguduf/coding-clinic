@@ -1,0 +1,17 @@
+---
+ssh_hardening_admin_user: ansible_admin
+ssh_hardening_password_authentication: true
+ssh_hardening_key_access_verified: false
+ssh_hardening_allow_tcp_forwarding: false
+ssh_hardening_kbd_interactive_authentication: false
+ssh_hardening_allow_users: []
+ssh_hardening_max_auth_tries: 3
+ssh_hardening_login_grace_time: 30
+ssh_hardening_client_alive_interval: 300
+ssh_hardening_client_alive_count_max: 2
+ssh_hardening_validation_host: localhost
+ssh_hardening_validation_addr: 127.0.0.1
+ssh_hardening_sshd_binary: /usr/sbin/sshd
+ssh_hardening_config_dir: /etc/ssh/sshd_config.d
+ssh_hardening_service_name: sshd
+

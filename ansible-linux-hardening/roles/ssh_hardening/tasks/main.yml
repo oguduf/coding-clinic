@@ -1,0 +1,118 @@
+---
+- name: Validate SSH hardening prerequisites and supported operating system
+  ansible.builtin.assert:
+    that:
+      - ssh_hardening_admin_user | length > 0
+      - ssh_hardening_admin_user != "root"
+      - ansible_user is defined
+      - ansible_user == ssh_hardening_admin_user
+      - ansible_facts.service_mgr == "systemd"
+      - >-
+        (ansible_facts.os_family == "Debian" and
+        ansible_facts.distribution == "Ubuntu" and ansible_facts.pkg_mgr == "apt" and
+        ansible_facts.distribution_version in ["22.04", "24.04"]) or
+        (ansible_facts.os_family == "RedHat" and
+        ansible_facts.distribution == "RedHat" and ansible_facts.pkg_mgr in ["dnf", "yum"] and
+        ansible_facts.distribution_major_version in ["8", "9"])
+      - ssh_hardening_max_auth_tries | int >= 1
+      - ssh_hardening_login_grace_time | int >= 1
+      - ssh_hardening_client_alive_interval | int >= 0
+      - ssh_hardening_client_alive_count_max | int >= 0
+      - ssh_hardening_allow_users | length == 0 or ssh_hardening_admin_user in ssh_hardening_allow_users
+    fail_msg: >-
+      SSH hardening requires a supported Ubuntu/RHEL system, systemd, and a
+      non-root Ansible connection using the configured administrative account.
+      If AllowUsers is configured it must include that administrator.
+
+- name: Require a prior key-access verification before disabling passwords
+  ansible.builtin.assert:
+    that:
+      - ssh_hardening_key_access_verified | bool
+    fail_msg: >-
+      PasswordAuthentication cannot be disabled until an administrator has
+      verified key-based access from a second session and set
+      ssh_hardening_key_access_verified=true.
+  when: not (ssh_hardening_password_authentication | bool)
+
+- name: Gather local account database
+  ansible.builtin.getent:
+    database: passwd
+
+- name: Validate configured administrative account exists
+  ansible.builtin.assert:
+    that:
+      - ssh_hardening_admin_user in ansible_facts.getent_passwd
+    fail_msg: "Configured SSH administrator {{ ssh_hardening_admin_user }} does not exist on this host."
+
+- name: Check administrator authorized_keys when password login is disabled
+  ansible.builtin.stat:
+    path: "{{ ansible_facts.getent_passwd[ssh_hardening_admin_user][4] }}/.ssh/authorized_keys"
+  register: ssh_hardening_authorized_keys
+  when: not (ssh_hardening_password_authentication | bool)
+
+- name: Require non-empty authorized_keys for the administrator
+  ansible.builtin.assert:
+    that:
+      - ssh_hardening_authorized_keys.stat.exists
+      - ssh_hardening_authorized_keys.stat.isreg
+      - ssh_hardening_authorized_keys.stat.size | int > 0
+    fail_msg: >-
+      Password login remains unchanged because the configured administrator has
+      no non-empty authorized_keys file.
+  when: not (ssh_hardening_password_authentication | bool)
+
+- name: Load operating-system-specific SSH tasks after access preflight
+  ansible.builtin.include_tasks: "{{ 'ubuntu.yml' if ansible_facts.distribution == 'Ubuntu' else 'rhel.yml' }}"
+
+- name: Ensure SSH drop-in directory exists
+  ansible.builtin.file:
+    path: "{{ ssh_hardening_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install managed SSH hardening configuration
+  ansible.builtin.template:
+    src: ssh-hardening.conf.j2
+    dest: "{{ ssh_hardening_config_dir }}/00-ansible-hardening.conf"
+    owner: root
+    group: root
+    mode: '0600'
+    backup: true
+  notify: Reload SSH service
+
+- name: Validate complete SSH daemon configuration before any reload
+  ansible.builtin.command:
+    argv:
+      - "{{ ssh_hardening_sshd_binary }}"
+      - -t
+  changed_when: false
+
+- name: Inspect effective SSH settings for administrator Match context
+  ansible.builtin.command:
+    argv:
+      - "{{ ssh_hardening_sshd_binary }}"
+      - -T
+      - -C
+      - "user={{ ssh_hardening_admin_user }},host={{ ssh_hardening_validation_host }},addr={{ ssh_hardening_validation_addr }}"
+  register: ssh_hardening_effective_config
+  changed_when: false
+
+- name: Enforce expected effective SSH settings
+  ansible.builtin.assert:
+    that:
+      - ssh_hardening_effective_config.stdout is search('(?m)^permitrootlogin no$')
+      - ssh_hardening_effective_config.stdout is search('(?m)^permitemptypasswords no$')
+      - ssh_hardening_effective_config.stdout is search('(?m)^pubkeyauthentication yes$')
+      - >-
+        ssh_hardening_effective_config.stdout is
+        search('(?m)^passwordauthentication ' ~ ('yes' if ssh_hardening_password_authentication else 'no') ~ '$')
+      - ssh_hardening_effective_config.stdout is search('(?m)^maxauthtries ' ~ (ssh_hardening_max_auth_tries | string) ~ '$')
+    fail_msg: >-
+      Effective SSH settings do not match the requested baseline for the
+      configured Match context. Review earlier directives and Match blocks.
+
+- name: Apply validated SSH configuration before proceeding to other roles
+  ansible.builtin.meta: flush_handlers
+

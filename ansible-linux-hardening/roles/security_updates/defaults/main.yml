@@ -1,0 +1,15 @@
+---
+security_updates_enabled: true
+security_updates_security_only: true
+security_updates_auto_reboot: false
+security_updates_auto_reboot_time: '03:00'
+security_updates_schedule: daily
+security_updates_ubuntu_origins:
+  - '${distro_id}:${distro_codename}-security'
+security_updates_rhel_install_timer: dnf-automatic-install.timer
+security_updates_rhel_competing_timers:
+  - dnf-automatic.timer
+  - dnf-automatic-download.timer
+  - dnf-automatic-notifyonly.timer
+security_updates_rhel_timer_time: '03:00:00'
+

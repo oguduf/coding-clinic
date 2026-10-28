@@ -1,0 +1,55 @@
+---
+- name: Install dnf-automatic on RHEL
+  ansible.builtin.dnf:
+    name: dnf-automatic
+    state: present
+
+- name: Configure RHEL automatic security updates
+  ansible.builtin.template:
+    src: automatic.conf.j2
+    dest: /etc/dnf/automatic.conf
+    owner: root
+    group: root
+    mode: '0644'
+    backup: true
+  notify:
+    - Reload systemd daemon
+    - Restart RHEL automatic update timer
+
+- name: Ensure systemd timer override directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/dnf-automatic-install.timer.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Configure persistent schedule for the DNF install timer
+  ansible.builtin.template:
+    src: dnf-automatic-install.timer.conf.j2
+    dest: /etc/systemd/system/dnf-automatic-install.timer.d/override.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - Reload systemd daemon
+    - Restart RHEL automatic update timer
+
+- name: Gather available systemd units
+  ansible.builtin.service_facts:
+
+- name: Stop and disable competing DNF automatic timers
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop: "{{ security_updates_rhel_competing_timers }}"
+  when: item in ansible_facts.services
+
+- name: Enable the single configured DNF install timer
+  ansible.builtin.systemd_service:
+    name: "{{ security_updates_rhel_install_timer }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+

@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  role_name: fail2ban
+  author: Code Clinic
+  description: Installs and configures Fail2ban SSH jail on supported Ubuntu and RHEL systems.
+  license: MIT
+  min_ansible_version: '2.16'
+  platforms:
+    - name: Ubuntu
+      versions: [jammy, noble]
+    - name: EL
+      versions: ['8', '9']
+dependencies: []
+

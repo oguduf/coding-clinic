@@ -1,0 +1,17 @@
+---
+# Documentation-only inventory. All addresses are reserved TEST-NET ranges.
+all:
+  vars:
+    ansible_user: ansible_admin
+  children:
+    linux:
+      children:
+        ubuntu:
+          hosts:
+            ubuntu-example:
+              ansible_host: 192.0.2.10
+        rhel:
+          hosts:
+            rhel-example:
+              ansible_host: 198.51.100.10
+

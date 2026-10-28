@@ -1,0 +1,10 @@
+---
+- name: Disable only unattended package installation without installing packages
+  ansible.builtin.template:
+    src: unattended-upgrades-disabled.j2
+    dest: /etc/apt/apt.conf.d/99ansible-disable-unattended-upgrades
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart apt-daily-upgrade timer
+
