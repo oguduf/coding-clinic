@@ -1,7 +1,0 @@
----
-- name: Install Fail2ban from the pre-approved RHEL package source
-  ansible.builtin.dnf:
-    name:
-      - fail2ban
-      - python3-systemd
-    state: present
