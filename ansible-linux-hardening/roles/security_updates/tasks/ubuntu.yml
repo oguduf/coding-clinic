@@ -1,0 +1,26 @@
+---
+- name: Remove disabled override when automatic security updates are enabled
+  ansible.builtin.file:
+    path: /etc/apt/apt.conf.d/99ansible-disable-unattended-upgrades
+    state: absent
+  notify: Restart apt-daily-upgrade timer
+- name: Install unattended-upgrades on Ubuntu
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+- name: Configure Ubuntu unattended security update policy
+  ansible.builtin.template:
+    src: unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/52ansible-security-updates
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart apt-daily-upgrade timer
+- name: Validate APT configuration syntax after rendering the policy
+  ansible.builtin.command:
+    argv:
+      - apt-config
+      - dump
+  changed_when: false

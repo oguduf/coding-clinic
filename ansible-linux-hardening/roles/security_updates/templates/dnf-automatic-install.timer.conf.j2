@@ -1,0 +1,7 @@
+# Managed by Ansible role security_updates. systemd drop-in survives package upgrades.
+[Timer]
+OnCalendar=
+OnCalendar={{ '*-*-* ' ~ security_updates_rhel_timer_time if security_updates_schedule == 'daily' else 'Sun *-*-* ' ~ security_updates_rhel_timer_time }}
+Persistent=true
+RandomizedDelaySec=30m
+

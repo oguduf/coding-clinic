@@ -1,0 +1,4 @@
+---
+# The playbook aborts on localhost before it contacts target hosts unless this is
+# explicitly set true in an approved change invocation.
+hardening_approved: false

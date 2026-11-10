@@ -1,0 +1,9 @@
+---
+ssh_hardening_service_name: sshd
+ssh_hardening_config_dir: /etc/ssh/sshd_config.d
+fail2ban_service_name: fail2ban
+security_updates_rhel_install_timer: dnf-automatic-install.timer
+security_updates_rhel_competing_timers:
+  - dnf-automatic.timer
+  - dnf-automatic-download.timer
+  - dnf-automatic-notifyonly.timer

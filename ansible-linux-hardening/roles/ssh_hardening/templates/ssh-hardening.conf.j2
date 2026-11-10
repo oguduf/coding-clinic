@@ -1,0 +1,18 @@
+# Managed by Ansible role ssh_hardening. Do not edit manually.
+# This early drop-in precedes vendor and cloud-init snippets.
+PermitRootLogin no
+PermitEmptyPasswords no
+PubkeyAuthentication yes
+PasswordAuthentication {{ 'yes' if ssh_hardening_password_authentication | bool else 'no' }}
+KbdInteractiveAuthentication {{ 'yes' if ssh_hardening_kbd_interactive_authentication | bool else 'no' }}
+AuthenticationMethods {{ 'any' if ssh_hardening_password_authentication | bool else 'publickey' }}
+MaxAuthTries {{ ssh_hardening_max_auth_tries }}
+LoginGraceTime {{ ssh_hardening_login_grace_time }}
+X11Forwarding no
+AllowTcpForwarding {{ 'yes' if ssh_hardening_allow_tcp_forwarding | bool else 'no' }}
+ClientAliveInterval {{ ssh_hardening_client_alive_interval }}
+ClientAliveCountMax {{ ssh_hardening_client_alive_count_max }}
+{% if ssh_hardening_allow_users | length > 0 %}
+AllowUsers {{ ssh_hardening_allow_users | join(' ') }}
+{% endif %}
+
