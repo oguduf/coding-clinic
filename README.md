@@ -35,20 +35,16 @@ The validator reads local JSON files only. Terraform plan JSON can be produced o
 ## Repository structure
 
 ```text
-terraform-plan-policy-validator/
+coding-clinic/
+├── .github/workflows/ci.yml
 ├── README.md
-├── LICENSE
-├── .gitignore
-├── validator.py
-├── policies.json
-├── examples/
-│   ├── compliant-plan.json
-│   ├── noncompliant-plan.json
-│   ├── compliant-cost.json
-│   └── over-budget-cost.json
-├── tests/
-│   └── test_validator.py
-└── .github/workflows/ci.yml
+└── terraform-plan-policy-validator/
+    ├── LICENSE
+    ├── .gitignore
+    ├── validator.py
+    ├── policies.json
+    ├── examples/
+    └── tests/test_validator.py
 ```
 
 ## Prerequisites and installation
@@ -170,7 +166,7 @@ Tests use synthetic plans and temporary files. They cover compliant/noncompliant
 
 ## GitHub Actions CI
 
-`.github/workflows/ci.yml` runs on pull requests and pushes to `main` when this folder is the repository root. Because this lab is nested inside the `coding-clinic` monorepo, the active path-filtered workflow is [`../.github/workflows/terraform-plan-policy-validator-ci.yml`](../.github/workflows/terraform-plan-policy-validator-ci.yml). Both grant only `contents: read`, check Python syntax and JSON fixtures, run `unittest`, validate the passing example, and confirm the failing example returns policy exit code `1`. Neither authenticates to a cloud provider, executes Terraform, nor modifies infrastructure.
+The single repository workflow, `.github/workflows/ci.yml`, runs this lab on pull requests and pushes to `main` when project files or the workflow change. It grants only `contents: read`, checks Python syntax and JSON fixtures, runs `unittest`, validates the passing example, and confirms the failing example returns policy exit code `1`. It does not authenticate to a cloud provider, execute Terraform, or modify infrastructure.
 
 ## Security considerations
 
