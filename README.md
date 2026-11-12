@@ -1,103 +1,195 @@
-﻿# Reusable GitHub Actions Semantic Versioning Automation
+# Terraform Plan Policy Validator
 
-This Code Clinic lab contains a reusable composite action that reads Conventional Commits, calculates the next semantic version, produces a changelog section, and can create an annotated local Git tag. It is code-only: it provisions no infrastructure and does not create GitHub releases.
+A small, offline Python 3.11+ tool that validates Terraform plan JSON against a JSON policy file. It checks a documented subset of S3 public-access settings, required tags on selected AWS resource types, and an externally supplied monthly cost estimate. Policy failures return exit code `1`, so CI can block promotion before apply.
 
-## Assignment problem statement
+This is a code-only lab. It does not connect to a cloud account, require credentials, create resources, execute Terraform, or change Terraform state.
 
-Enterprise teams often maintain versions, changelogs, and tags by hand across many repositories. That creates inconsistent versions, missed change notes, incorrect release tags, and avoidable operator errors. Build a reusable GitHub Actions composite action that applies Conventional Commit rules to prepare a consistent release. The default must be a safe dry-run; publishing must be explicit and guarded.
+## Original problem statement
+
+> Write a Python tool that validates Terraform plans against a policy-as-code ruleset (e.g., no public S3 buckets, required tags, cost thresholds) and fails the pipeline if violated.
+
+## Enterprise business scenario
+
+Shared infrastructure teams need repeatable checks before approving infrastructure changes. A plan may accidentally grant public storage access, omit ownership metadata, or exceed an approved budget. Running these checks in CI creates an early, consistent feedback point before an operator applies the plan. This tool is a preventive check; it does not replace cloud IAM, security monitoring, or a comprehensive policy engine.
 
 ## Architecture
 
 ```mermaid
-flowchart TD
-  A[Caller workflow] --> B[Composite action]
-  B --> C[Read local Git history and tags]
-  C --> D[Parse Conventional Commits]
-  D --> E[Choose highest SemVer bump]
-  E --> F[Print version and changelog]
-  F --> G{Explicit options and authorization?}
-  G -->|create-tag only| H[Create local annotated tag]
-  G -->|push-tag plus protected ref and token| I[Push tag]
-  G -->|default| J[No repository changes]
+flowchart LR
+  Plan[Terraform plan JSON] --> Validator[Python policy validator]
+  Policy[policies.json] --> Validator
+  Estimate[External cost estimate JSON] --> Validator
+  Validator --> S3[S3 security subset]
+  Validator --> Tags[Required tags]
+  Validator --> Cost[Cost threshold]
+  S3 --> Report[Terminal and optional JSON report]
+  Tags --> Report
+  Cost --> Report
+  Report -->|PASS, exit 0| Pass[CI continues]
+  Report -->|FAIL or REVIEW_REQUIRED, exit 1| Stop[CI fails for review]
+  Report -->|Invalid input, exit 2| Error[CI reports configuration/input error]
 ```
 
-The action code is resolved from its own `github.action_path`; Git history and tags are read from the caller's checked-out working directory.
+The validator reads local JSON files only. Terraform plan JSON can be produced outside this lab using `terraform show -json tfplan`; running Terraform is not part of the project.
 
 ## Repository structure
 
-| Path | Purpose |
+```text
+terraform-plan-policy-validator/
+├── README.md
+├── LICENSE
+├── .gitignore
+├── validator.py
+├── policies.json
+├── examples/
+│   ├── compliant-plan.json
+│   ├── noncompliant-plan.json
+│   ├── compliant-cost.json
+│   └── over-budget-cost.json
+├── tests/
+│   └── test_validator.py
+└── .github/workflows/ci.yml
+```
+
+## Prerequisites and installation
+
+- Python 3.11 or newer.
+- No third-party Python packages are required.
+- Terraform CLI is optional and is not used by the validator or tests.
+
+Clone or enter this project directory; there is no package installation step. The included plans and estimates are synthetic examples. To validate your own plan later, generate its JSON securely in your own workflow and provide a separately generated cost estimate.
+
+## Policy configuration
+
+Edit `policies.json` without changing Python code:
+
+```json
+{
+  "required_tags": ["Environment", "Owner", "Project"],
+  "enforce_s3_private": true,
+  "max_monthly_cost_usd": 500
+}
+```
+
+The file must contain all three fields. Tag names must be a non-empty list of unique strings; `enforce_s3_private` must be a boolean; and the budget must be a finite, non-negative number. Invalid policy data is an input error and returns exit code `2`.
+
+## Policy behavior
+
+### S3 access checks
+
+When `enforce_s3_private` is true, the tool examines planned create/update actions for `aws_s3_bucket`, `aws_s3_bucket_acl`, `aws_s3_bucket_public_access_block`, and `aws_s3_bucket_policy`.
+
+- Public canned ACLs (`public-read`, `public-read-write`, `authenticated-read`) and ACL grants to the AWS global AllUsers or AuthenticatedUsers groups fail.
+- Each explicitly planned public access block must set all four controls to `true`: `block_public_acls`, `ignore_public_acls`, `block_public_policy`, and `restrict_public_buckets`. A planned `false` fails; a missing or unknown setting requires review.
+- An unconditional `Allow` bucket-policy statement with a wildcard principal fails. A wildcard principal with a condition requires review because this tool does not evaluate IAM policy conditions.
+- Unknown ACL/policy values, or policy documents the tool cannot interpret, require review and fail closed.
+- Absence of a public access block from a plan does not prove the bucket is public or private, so absence alone is not reported as a violation. Protections configured outside the plan are not assessed.
+
+These checks intentionally cover a narrow subset of S3 exposure behavior. They do not model every IAM principal, condition operator, access point, organization control, account-level setting, or cross-resource interaction. A `REVIEW_REQUIRED` result is not a claim that the resource is public; it means the tool cannot prove it safe.
+
+### Required tags
+
+The validator checks final planned `tags` and `tags_all` values for create and update operations on this explicit supported set: `aws_instance`, `aws_launch_template`, `aws_security_group`, `aws_vpc`, `aws_subnet`, `aws_ebs_volume`, `aws_kms_key`, `aws_iam_role`, `aws_lambda_function`, `aws_dynamodb_table`, `aws_rds_cluster`, `aws_db_instance`, `aws_s3_bucket`, `aws_sqs_queue`, `aws_sns_topic`, `aws_ecs_cluster`, `aws_ecs_service`, and `aws_eks_cluster`.
+
+Delete-only changes are ignored. Other resource types are not assumed to support tags. A missing required tag fails and identifies the Terraform resource address. An unknown planned required tag requires review and fails closed. `tags_all` is included because provider defaults or inherited tags may appear there; this is still based only on values present in the plan JSON.
+
+### Cost threshold
+
+Terraform plans do not provide reliable AWS prices. Supply a separate cost estimate created by an external estimation process:
+
+```json
+{"estimated_monthly_cost_usd": 420.00}
+```
+
+The estimate is compared to `max_monthly_cost_usd` using Python `Decimal`. Negative, non-finite, malformed, or missing estimates are input errors. An estimate equal to the limit passes; a greater estimate fails. This tool does not calculate AWS billing costs or call pricing APIs.
+
+## Usage
+
+From this project folder:
+
+```bash
+python validator.py \
+  --plan examples/compliant-plan.json \
+  --policy policies.json \
+  --cost examples/compliant-cost.json
+```
+
+PowerShell:
+
+```powershell
+python .\validator.py `
+  --plan .\examples\compliant-plan.json `
+  --policy .\policies.json `
+  --cost .\examples\compliant-cost.json
+```
+
+To see a policy failure:
+
+```bash
+python validator.py \
+  --plan examples/noncompliant-plan.json \
+  --policy policies.json \
+  --cost examples/over-budget-cost.json
+```
+
+To save a machine-readable summary, add `--output report.json`. The output includes overall status, check statuses, the count of planned create/update resources, and messages with affected resource addresses. It deliberately excludes planned tag values and policy contents. The report file is the only file the validator can write, and only when explicitly requested.
+
+### Example results
+
+The compliant fixture reports:
+
+```text
+S3 Security: PASS
+Required Tags: PASS
+Cost Threshold: PASS
+Resources checked: 3
+Overall Result: PASS
+```
+
+The noncompliant fixtures report `FAIL` for S3 security, required tags, and cost threshold, including resource-specific remediation messages.
+
+### Exit codes
+
+| Code | Meaning |
 | --- | --- |
-| `action.yml` | Composite-action inputs, outputs, and invocation |
-| `scripts/release.py` | Standard-library version calculation, changelog, and safe Git operations |
-| `tests/test_release.py` | Offline unit and temporary Git repository tests |
-| `examples/workflow.yml` | Consumer workflow, pinned checkout action, publishing disabled |
-| `.github/workflows/ci.yml` | Read-only validation workflow |
-| `LICENSE` | MIT license |
+| `0` | All checks passed |
+| `1` | A policy was violated or needs review |
+| `2` | Input, policy, cost estimate, or optional report path is invalid |
 
-## Prerequisites
+The plan input must be Terraform plan JSON with a top-level `format_version` string and a `resource_changes` array. Terraform state JSON is not accepted as a substitute.
 
-- Git 2.x and Python 3.10 or newer for local use.
-- GitHub Actions for hosted execution.
-- The caller workflow must check out full history and tags (`fetch-depth: 0`), otherwise the baseline and commit range may be incomplete.
+## Testing
 
-## Version rules
-
-Versions use `MAJOR.MINOR.PATCH` and tags use `v` (for example, `v1.2.3`). `fix:` requests PATCH, `feat:` requests MINOR, and either a `!` marker or a `BREAKING CHANGE:` footer requests MAJOR. `docs:`, `chore:`, and other non-feature/fix commits do not trigger a release unless marked breaking. The highest bump among commits since the latest valid tag wins. When no valid version tag exists, the baseline is `0.0.0`, so the first `feat:` release is `0.1.0` and the first breaking release is `1.0.0`.
-
-## Local use
-
-Run from the caller repository root with Git history available:
-
-```bash
-python3 /path/to/github-actions-semantic-release/scripts/release.py --dry-run true --create-tag false --push-tag false
-```
-
-The script prints current/next version, release type, tag name, and generated changelog. It does not modify repository state in dry-run mode. It reports that no release is required when the commit range contains no qualifying changes.
-
-To create a local annotated tag deliberately:
-
-```bash
-python3 /path/to/github-actions-semantic-release/scripts/release.py --dry-run false --create-tag true --push-tag false
-```
-
-This only creates a local tag and refuses to overwrite a tag with the same name. Review the planned version first. The script prints a generated changelog section; it does not write or commit `CHANGELOG.md`. Save and commit changelog content separately if it should be part of project history.
-
-## GitHub Actions use
-
-See [`examples/workflow.yml`](examples/workflow.yml). Replace `example-org` with the action's published owner and repository. The example checks out full history, pins third-party actions to commit SHAs, grants `contents: read`, and leaves all publishing options disabled.
-
-The action exposes `current-version`, `next-version`, `release-type`, `tag-name`, and `changelog`. Callers must never put these outputs into shell source; pass dynamic values through environment variables when using shell steps.
-
-### Optional authorized tag publishing
-
-Publishing is not configured in the sample CI. An organization choosing to enable it must use a dedicated protected GitHub Environment and branch protection/rulesets, require approval from authorized operators, grant only the publishing job `contents: write`, and ensure checkout persisted credentials for that token. Set the repository/organization variable `RELEASE_PUBLISH_AUTHORIZED=true` only for the approved workflow, set `dry-run: 'false'`, `create-tag: 'true'`, and `push-tag: 'true'`. The action also requires GitHub to report `github.ref_protected` as true and requires a `GITHUB_TOKEN`. A branch name such as `main` alone is not evidence of protection. GitHub does not expose whether a particular workflow approval policy was satisfied to a composite action; protected Environment approval and tightly scoped workflow permissions remain external controls. Never enable publishing on untrusted pull requests and do not use `pull_request_target`.
-
-## Changelog behavior
-
-The generated section includes feature and bug-fix commits grouped under headings. Existing changelog history is preserved, and an already-present version heading is not duplicated. For this minimal action, changelog generation is returned as output and printed locally; no file is automatically committed or pushed.
-
-## Security and idempotency
-
-- Defaults are `dry-run: true`, `create-tag: false`, and `push-tag: false`.
-- CI uses `contents: read`; it does not have a publishing job.
-- Tag names are constructed from validated numeric semantic versions; tags are annotated and existing tags are never replaced or force-pushed.
-- Git commands use argument arrays through Python `subprocess`, never `shell=True`.
-- Tokens are not hardcoded or printed. The publishing token must be supplied through GitHub's protected workflow context with the smallest required permission.
-- Each run uses a tag-based history boundary. Re-running without new qualifying commits produces no new release; existing changelog headings and tags are preserved.
-- SSH hardening is not part of this code-only release automation; release publishing safeguards are the relevant access-control boundary here.
-
-## Tests and CI
-
-Run the offline test suite with:
+Run the offline suite using only the standard library:
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-Tests cover patch/minor/major selection, breaking footers, precedence, non-release commits, the first-release baseline, numeric tag ordering, changelog history and duplicate sections, dry-run state, duplicate tags, and invalid versions. Git-related cases use temporary local repositories; they do not access GitHub or push.
+Tests use synthetic plans and temporary files. They cover compliant/noncompliant plans, public ACL and policy behavior, access-block settings, tags, deletion and nested-module addresses, unknown values, cost boundaries and errors, malformed JSON, empty changes, and CLI exit codes. Tests do not use cloud credentials or contact external services.
 
-The repository CI runs on pull requests and pushes to `main`. It performs Python syntax checks, unit tests, action YAML parsing, and a dry-run invocation, with `contents: read` only. The workflow's YAML parser is provided by the hosted runner's Python environment; if it is unavailable, replace that step with a pinned YAML-validation action or add PyYAML as an explicit CI dependency.
+## GitHub Actions CI
 
-## Limitations and future work
+`.github/workflows/ci.yml` runs on pull requests and pushes to `main` when this folder is the repository root. Because this lab is nested inside the `coding-clinic` monorepo, the active path-filtered workflow is [`../.github/workflows/terraform-plan-policy-validator-ci.yml`](../.github/workflows/terraform-plan-policy-validator-ci.yml). Both grant only `contents: read`, check Python syntax and JSON fixtures, run `unittest`, validate the passing example, and confirm the failing example returns policy exit code `1`. Neither authenticates to a cloud provider, executes Terraform, nor modifies infrastructure.
 
-This lab is code-only and does not involve cloud infrastructure. No remote Git tags were pushed and no live GitHub release was published. Local tag creation is implemented but disabled by default. GitHub Releases integration and richer release notes are possible future additions and are intentionally not implemented here.
+## Security considerations
+
+- Run policy validation before an approved deployment or apply stage.
+- No cloud credentials or network access are required by this validator.
+- CI has least-privilege read-only repository permission.
+- Invalid inputs and unresolved enforced-policy values fail closed.
+- Terraform plan JSON may contain secrets or sensitive values. Do not commit real plans, upload them to broadly accessible artifacts, or print their contents in logs. This repository uses synthetic fixtures only.
+- Reports include addresses and remediation messages, not plan values.
+- The tool is a preventive governance check, not a replacement for IAM controls, cloud security monitoring, provider validation, or enterprise policy engines.
+
+## Idempotency and limitations
+
+The validator is read-only and deterministic for identical input files. It never modifies a plan, policy, Terraform state, or cloud resource. It writes a JSON report only when `--output` is explicitly requested. Cost estimates are supplied externally, and the S3 analysis intentionally recognizes only a documented subset of exposure patterns. Unknown cases require human review and cause CI to fail; the tool does not claim complete public-exposure analysis.
+
+## Future improvements
+
+Possible follow-up work includes richer policy rules, more provider-specific taggable resource types, reviewed IAM-condition analysis, and standardized integration with an external cost-estimation job. Those features are not part of this lab.
+
+## Lab scope
+
+This is a code-only project. No AWS resources were deployed, no live cloud accounts were accessed, no cloud credentials were used, and no real Terraform plan or state was modified.
