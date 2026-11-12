@@ -1,0 +1,5 @@
+{
+  "required_tags": ["Environment", "Owner", "Project"],
+  "enforce_s3_private": true,
+  "max_monthly_cost_usd": 500
+}
