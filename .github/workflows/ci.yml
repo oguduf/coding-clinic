@@ -1,21 +1,25 @@
-name: Argo CD Kustomize validation
+name: Coding Clinic CI
 
 on:
   pull_request:
     paths:
       - 'argocd-multicluster-gitops/**'
+      - 'terraform-drift-cost-monitor/**'
       - '.github/workflows/ci.yml'
+      - '.github/workflows/drift-detection.yml'
   push:
     branches: [main]
     paths:
       - 'argocd-multicluster-gitops/**'
+      - 'terraform-drift-cost-monitor/**'
       - '.github/workflows/ci.yml'
+      - '.github/workflows/drift-detection.yml'
 
 permissions:
   contents: read
 
 jobs:
-  validate:
+  validate-argocd-kustomize:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -37,3 +41,36 @@ jobs:
         run: yamllint -d relaxed applicationset.yaml app
       - name: Validate overlays and ApplicationSet
         run: bash scripts/validate.sh
+
+  validate-terraform-drift-monitor:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform-drift-cost-monitor
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+      - name: Check Python syntax
+        run: python -m py_compile scripts/analyze.py scripts/notify_slack.py tests/test_analyze.py tests/test_notify.py
+      - name: Run offline Python tests
+        run: python -m unittest discover -s tests -v
+      - name: Analyze no-drift fixture and preview Slack message
+        run: |
+          python scripts/analyze.py --plan examples/no-drift-plan.json --cost examples/infracost-example.json --environment dev --output report.json
+          python scripts/notify_slack.py --report report.json --dry-run
+      - name: Analyze drift fixture
+        run: python scripts/analyze.py --plan examples/drift-plan.json --cost examples/infracost-example.json --environment dev --output report.json
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4.0.1
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+      - name: Validate Terraform configuration without a backend
+        run: |
+          terraform fmt -check -recursive terraform
+          terraform -chdir=terraform init -backend=false -input=false -no-color
+          terraform -chdir=terraform validate -no-color

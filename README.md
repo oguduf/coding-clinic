@@ -1,142 +1,155 @@
-# Argo CD ApplicationSet and Kustomize Multi-Cluster GitOps
+# Automated Terraform Drift Detection and Cost Monitoring
 
-This code-only lab defines one Nginx application and generates DEV, STAGE, and PROD Argo CD Applications from a simple ApplicationSet list generator. Kustomize keeps the shared Deployment and Service in one base and applies small environment overlays. No cluster connection, cloud credentials, or deployment is used by the lab.
+This code-only lab demonstrates a scheduled GitHub Actions pipeline for Terraform refresh-only drift detection, an independent Infracost monthly estimate, and an optional Slack notification. The scheduled workflow is disabled by default. The lab has not authenticated to a cloud provider, accessed real Terraform state, or sent Slack messages.
 
 ## Original assignment
 
-> Build an Argo CD ApplicationSet + Kustomize/Helm pattern that deploys the same application across multiple clusters/environments with environment-specific overlays.
+> Create a CircleCI or GitHub Actions pipeline that runs infrastructure drift detection (Terraform plan + Infracost) on a schedule and posts results to Slack/Teams.
 
-This implementation uses Kustomize to keep the project focused and avoid duplicated manifests.
+This implementation uses GitHub Actions and Slack Incoming Webhooks.
 
-## Business scenario
+## Business problem
 
-Platform teams often need to run the same service in several clusters while varying replica counts, namespaces, resource budgets, and environment settings. Copying manifests for each environment encourages drift. A shared base with small overlays keeps common behavior reviewable and makes deliberate differences explicit.
+Manual changes made outside Terraform can cause state and remote infrastructure to diverge. A periodic refresh-only plan can identify certain remote-object differences from recorded state, while a cost estimator can report an estimate for the configured Terraform resources. A concise report gives operators a review starting point without automatically changing infrastructure.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-  Git[Git repository] --> Set[Argo CD ApplicationSet]
-  Set -->|list: dev| Dev[demo-app-dev]
-  Set -->|list: stage| Stage[demo-app-stage]
-  Set -->|list: prod| Prod[demo-app-prod]
-  Dev --> DevK[Kustomize app/overlays/dev]
-  Stage --> StageK[Kustomize app/overlays/stage]
-  Prod --> ProdK[Kustomize app/overlays/prod]
-  DevK --> Base[Shared app/base Deployment and Service]
-  StageK --> Base
-  ProdK --> Base
-  Dev --> C1[Placeholder DEV cluster]
-  Stage --> C2[Placeholder STAGE cluster]
-  Prod --> C3[Placeholder PROD cluster]
+  Schedule[Weekly GitHub Actions schedule] --> Gate{ENABLE_LIVE_DRIFT_DETECTION is true?}
+  Gate -->|No, default| Safe[Print disabled notice; no cloud or Slack access]
+  Gate -->|Yes, authorized setup| OIDC[Assume restricted AWS role with OIDC]
+  OIDC --> Backend[Initialize approved remote backend]
+  Backend --> Plan[Terraform refresh-only plan]
+  Plan -->|Exit 0 or 2| JSON[Convert plan to JSON]
+  Plan -->|Other exit code| Error[Fail workflow]
+  JSON --> Analyze[Analyze affected resources]
+  Analyze --> Cost[Infracost monthly estimate]
+  Cost --> Report[Safe JSON and terminal report]
+  Report --> Slack{Slack delivery explicitly enabled?}
+  Slack -->|No| Preview[Print dry-run message preview]
+  Slack -->|Yes and notification condition met| Notify[Post to Slack webhook]
 ```
 
-This diagram describes the intended flow. The repository does not connect to or configure any cluster.
+The enabled path is a future operational capability, not a deployed environment. The validation workflow uses only synthetic files and does not run this scheduled workflow.
 
 ## Repository structure
 
 ```text
-argocd-multicluster-gitops/
-├── applicationset.yaml
-├── app/
-│   ├── base/
-│   │   ├── deployment.yaml
-│   │   ├── service.yaml
-│   │   └── kustomization.yaml
-│   └── overlays/
-│       ├── dev/
-│       ├── stage/
-│       └── prod/
-├── scripts/validate.sh
+terraform-drift-cost-monitor/
+├── terraform/
+│   ├── main.tf
+│   ├── variables.tf
+│   └── outputs.tf
+├── scripts/
+│   ├── analyze.py
+│   └── notify_slack.py
+├── config/settings.example.json
+├── examples/
+│   ├── no-drift-plan.json
+│   ├── drift-plan.json
+│   └── infracost-example.json
+├── tests/
+│   ├── test_analyze.py
+│   └── test_notify.py
 ├── README.md
 ├── LICENSE
 └── .gitignore
 ```
 
-The monorepo uses one repository-level workflow at [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml), with a path-scoped job for this lab. Keeping workflows at the repository root avoids duplicate workflow folders.
+This lab follows the monorepo's single workflow folder: the CI job is in [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml), and the scheduled workflow is [`../.github/workflows/drift-detection.yml`](../.github/workflows/drift-detection.yml). No workflow files are nested in this project directory.
 
-## Technology and prerequisites
+## How drift detection works
 
-- Argo CD ApplicationSet and Kubernetes manifests.
-- Kustomize through `kubectl kustomize`; no Kubernetes context is needed.
-- Bash, Python 3.11+, and PyYAML for local validation.
-- `yamllint` for YAML linting in CI.
-- No Helm, Terraform, Docker build, cloud CLI, or credentials.
+Terraform's `plan -refresh-only` compares remote object observations with Terraform's recorded state and prepares a plan to update state observations. It does not compare the configuration to the live resource in the same way as a normal plan, and it does not by itself prove the resource still matches the desired configuration. Review the plan before any state update; this lab never runs `terraform apply` or `apply -refresh-only`.
 
-Install the lightweight YAML parser for local validation if needed:
+With `-detailed-exitcode`, Terraform returns `0` when the plan is empty, `2` when changes are present, and `1` for an error. The scheduled workflow explicitly treats `0` and `2` as successful planning outcomes and fails on other exit codes. It never hides errors with `continue-on-error`.
 
-```bash
-python3 -m pip install PyYAML==6.0.3
+`analyze.py` reads plan JSON and uses the `resource_drift` entries when present, falling back to `resource_changes` for older or synthetic inputs. It reports addresses and actions only; it does not include before/after attribute values. Reports and Slack messages include an environment and run ID so repeated scheduled notifications can be distinguished. Malformed inputs and Terraform plans marked errored produce an error status and nonzero exit code.
+
+## Infracost and cost interpretation
+
+Infracost estimates the monthly cost of the Terraform configuration. The report displays that amount separately from drift and always uses `N/A` for drift cost impact because a refresh-only drift plan is not a reliable estimate of the financial impact of out-of-band changes. A cost estimate is not an actual cloud bill or a promise of savings. Offline examples use synthetic cost data and no pricing API.
+
+The live workflow requires an `INFRACOST_API_KEY` GitHub Environment secret. When enabled, the Infracost CLI may send resource configuration details to its pricing service; review organizational data handling requirements before enabling it.
+
+## Slack notification behavior
+
+`notify_slack.py` formats a concise message with environment, drift status, changed-resource count, estimate, and review status. Its default behavior is dry-run: it prints a preview and performs no network request. Delivery requires the explicit `--send` option and `SLACK_WEBHOOK_URL`. The workflow also requires the separate `ENABLE_SLACK_NOTIFICATIONS=true` variable, and by default sends only when drift is detected. `NOTIFICATION_ON_NO_DRIFT=true` can explicitly allow no-drift notifications. The webhook URL belongs in a GitHub Environment secret, never in source code or logs.
+
+## Configuration
+
+`config/settings.example.json` documents safe defaults:
+
+```json
+{
+  "environment": "dev",
+  "drift_detection_enabled": false,
+  "slack_notifications_enabled": false,
+  "notification_on_no_drift": false
+}
 ```
 
-Install `kubectl` for your operating system. CI installs `kubectl` and `yamllint`. The validation script only uses `kubectl kustomize`; it never reads a kubeconfig or contacts a cluster.
+The schedule workflow does not read or create these GitHub settings automatically. Live execution requires the repository variable `ENABLE_LIVE_DRIFT_DETECTION=true`. The GitHub Environment named `drift-detection` must be created and protected separately, with required approvals and these variables:
 
-## ApplicationSet
+- `AWS_ROLE_ARN`, `AWS_REGION`
+- `TF_STATE_BUCKET`, `TF_STATE_KEY`, `TF_STATE_REGION`
+- `DRIFT_MONITORED_BUCKET`, `DRIFT_ENVIRONMENT` (`dev`, `stage`, or `prod`)
+- Optional `ENABLE_SLACK_NOTIFICATIONS=true` and `NOTIFICATION_ON_NO_DRIFT=true`
 
-`applicationset.yaml` uses one list generator with three entries. Each maps an environment to a placeholder API URL, namespace, and overlay path. A shared template generates `demo-app-dev`, `demo-app-stage`, and `demo-app-prod` in the `default` Argo CD project.
+Secrets for the environment are `INFRACOST_API_KEY` and, only if Slack delivery is enabled, `SLACK_WEBHOOK_URL`. These are documentation requirements, not values configured by this lab.
 
-The source URL uses `example-org`; replace it with the published repository URL before configuring Argo CD. `targetRevision` is `main`. The placeholder cluster URLs end in `.example.invalid` and must be replaced by cluster destinations already registered with Argo CD. Cluster registration is an external prerequisite and is not performed here.
+## Terraform example and live prerequisites
 
-Automated sync and self-healing are enabled. Automatic pruning is disabled so deleting a manifest from Git does not automatically remove its live resource. Review deletion behavior before enabling pruning. `CreateNamespace=true` lets Argo CD create the destination namespace; each overlay also includes its Namespace manifest so the environment label is declarative.
+`terraform/` contains a small AWS S3 bucket example with no credentials, account IDs, or real backend settings. CI initializes it with `-backend=false`, so validation does not access any remote state. The example bucket name is a placeholder and is not applied.
 
-## Kustomize base and overlays
+Real drift checks would require an existing Terraform-managed environment, matching configuration and state, an approved remote backend, read-only AWS permissions for the managed resources, narrowly scoped backend state/lock access, a protected GitHub Environment, and a trusted runner. The AWS role should trust only the repository's protected branch/environment through GitHub OIDC. Do not give the role resource write permissions. Backend locking can require write/delete access to the lock object even when the resource permissions are read-only. Configure these controls outside this lab.
 
-The base contains a Deployment and ClusterIP Service for `demo-app`. The Deployment uses the version-pinned `nginxinc/nginx-unprivileged:1.27.5-alpine` image, listens on port 8080, and defines readiness and liveness probes, resource defaults, a non-root UID, a runtime-default seccomp profile, no privilege escalation, and dropped Linux capabilities.
+## Local offline demonstration
 
-Each overlay references the base and patches only the environment-specific values:
-
-| Environment | Namespace | Replicas | CPU request / limit | Memory request / limit |
-| --- | --- | ---: | --- | --- |
-| DEV | `app-dev` | 1 | `50m` / `250m` | `64Mi` / `128Mi` |
-| STAGE | `app-stage` | 2 | `100m` / `500m` | `128Mi` / `256Mi` |
-| PROD | `app-prod` | 3 | `250m` / `1` | `256Mi` / `512Mi` |
-
-Each overlay labels resources and Pods with the environment and sets `APP_ENV`. Production resource settings do not replace normal protected-branch and pull-request review; approval automation is not configured.
-
-## Local validation
-
-Run these commands from this project directory. They render manifests locally and do not communicate with a cluster:
+From this project directory:
 
 ```bash
-kubectl kustomize app/overlays/dev
-kubectl kustomize app/overlays/stage
-kubectl kustomize app/overlays/prod
-bash scripts/validate.sh
+python scripts/analyze.py \
+  --plan examples/drift-plan.json \
+  --cost examples/infracost-example.json \
+  --environment dev
+
+python scripts/notify_slack.py \
+  --report report.json \
+  --dry-run
+
+python -m unittest discover -s tests -v
 ```
 
-The validation script checks required files, parses YAML locally, verifies the ApplicationSet generator and overlay paths, renders all overlays, and checks namespaces, replicas, environment labels, and resource requests/limits. It rejects Kubernetes Secret manifests and credential-bearing URLs. Invalid YAML or missing configuration returns a nonzero exit code.
+The analyzer writes `report.json` by default. Use `--output path.json` to choose a different local report path. Try `examples/no-drift-plan.json` for the no-drift case. Tests use only synthetic files and mocked webhook delivery; they do not need AWS credentials, a Terraform backend, Infracost credentials, or Slack access.
 
-## GitHub Actions CI
+## GitHub Actions workflows
 
-The single workflow at the repository root runs on pull requests and pushes to `main` when this project or the workflow changes. It installs pinned Python and kubectl versions, runs yamllint, and executes the offline validation script. Repository permissions are limited to `contents: read`. CI does not log in to Argo CD or Kubernetes, access cloud accounts, or apply manifests.
+The repository's one `.github/workflows` folder contains:
 
-## How live deployment would work
+- `ci.yml`: runs on pull requests and pushes to `main`; performs Python syntax checks, offline unit tests, Terraform formatting and validation with backend initialization disabled, fixture analysis, and Slack dry-run tests. Permissions are `contents: read`.
+- `drift-detection.yml`: scheduled weekly on Monday at 08:00 UTC and manually dispatchable. When the enablement variable is absent or false, it only prints that live detection is disabled. The live job requests `id-token: write` only after explicit enablement and uses OIDC rather than static cloud keys. No backend, AWS role, secret, or environment approval is provisioned here.
 
-After publishing the repository, update the placeholder source URL. An Argo CD administrator would install the ApplicationSet in a configured Argo CD control plane. The destination clusters must first be registered, and the Argo CD AppProject must permit the intended destinations, namespaces, and resource kinds. Argo CD would generate one Application per list entry, render the selected Kustomize overlay, and reconcile desired state to its destination cluster.
-
-These are external operational prerequisites only. This lab does not perform them. Do not run `kubectl apply` or `argocd app sync` as part of local validation.
+When an administrator explicitly enables the live workflow, it initializes only the approved backend, runs a refresh-only plan, analyzes JSON output, generates the Infracost estimate, and optionally sends Slack. It never runs apply or destroy. It does not upload plan files as artifacts.
 
 ## Security
 
-- Do not commit passwords, tokens, kubeconfigs, cloud credentials, or Kubernetes Secret objects.
-- The ApplicationSet contains placeholder cluster URLs and a placeholder source repository.
-- Use production AppProjects that restrict source repositories, destinations, namespaces, and resource kinds. The built-in `default` project is used only to keep the example small.
-- Use least-privilege Argo CD access and register clusters through an approved administrative process.
-- Protect the production branch and require pull-request reviews for production overlay changes.
-- The container runs as non-root with restricted privileges. For higher assurance, pin the image by a verified digest during release review.
-- Automated sync and self-healing can reconcile manual changes. Enabling prune can delete resources removed from Git, so review that behavior before turning it on.
-- External Secrets Operator or Sealed Secrets could be evaluated later if the application needs secrets; neither is configured here.
+- No AWS credentials, cloud account IDs, state files, or real Terraform plans are committed.
+- CI has read-only repository permission and uses `terraform init -backend=false`; it does not contact AWS.
+- The scheduled job is disabled unless the repository variable is explicitly set. Its live job uses short-lived OIDC credentials and a separately protected GitHub Environment.
+- Restrict the AWS role to read-only access on managed resources and the minimum remote-state access. The S3 backend may also need narrowly scoped permissions on its state lock object. Restrict OIDC trust to the protected repository branch and environment.
+- Store the Infracost API key and Slack webhook in GitHub Environment secrets. Do not echo them or put them in Terraform files.
+- Terraform plan JSON can contain sensitive values. The live workflow keeps plan files in the runner's temporary directory, does not upload them, excludes values from reports, and removes temporary files at the end of the job.
+- Slack delivery is opt-in at both the workflow variable and script flag. Dry-run performs no network request.
+- No automatic remediation, `terraform apply`, `terraform destroy`, or state-writing refresh-only apply is used.
 
-## Idempotency and GitOps behavior
+## Idempotency and limitations
 
-Kubernetes manifests describe desired state. Kustomize composes that state from the shared base and one overlay. Argo CD compares rendered Git state with cluster state and, with automated sync and self-healing enabled, can reconcile drift. Stable API kind, namespace, and object names let Kubernetes update the same Deployment and Service when unchanged manifests are reconciled rather than creating duplicates.
+Repeated analysis of identical plan and cost JSON produces the same report. The scripts do not modify infrastructure or Terraform state. A scheduled run can notify repeatedly about unresolved drift. Cost data is a configuration estimate, not observed billing, and drift cost impact remains `N/A` unless a separately reviewed method can calculate it reliably.
 
-Reconciliation is not risk-free: image, replica, resource, or deletion changes can affect availability. Review production changes and understand sync options before enabling them.
+This lab does not access a real backend, validate IAM policies, verify actual Slack delivery, or guarantee complete drift detection for every provider/resource behavior. The sample backend is intentionally unconfigured and the sample S3 bucket is not created.
 
-## Limitations and future improvements
+## Future improvements
 
-This lab does not validate the ApplicationSet against a live Argo CD CRD schema, register clusters, test image availability, estimate capacity, or deploy workloads. Placeholder URLs and repository ownership must be replaced before use. AppProject restrictions, admission policies, secret delivery, and cloud security are outside its scope.
-
-Future work could add Argo CD schema validation, image digest pinning, admission policy examples, and a separately reviewed secrets integration.
-
-No cluster was contacted, no application was deployed, and no cloud resource was created for this lab.
+Possible follow-up work includes reviewed per-environment state configuration, policy checks over drift reports, richer cost baselines, and organization-specific retention controls for sensitive plans. Any live integration should remain separately approved and least-privileged.
