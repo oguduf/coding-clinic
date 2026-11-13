@@ -1,0 +1,6 @@
+{
+  "environment": "dev",
+  "drift_detection_enabled": false,
+  "slack_notifications_enabled": false,
+  "notification_on_no_drift": false
+}

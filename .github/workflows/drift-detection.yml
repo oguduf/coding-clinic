@@ -1,0 +1,121 @@
+name: Scheduled Terraform drift detection
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  disabled-by-default:
+    if: vars.ENABLE_LIVE_DRIFT_DETECTION != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain disabled state
+        run: echo 'Live drift detection is disabled. No cloud authentication, Terraform state access, or Slack delivery occurred.'
+
+  live-drift-detection:
+    if: vars.ENABLE_LIVE_DRIFT_DETECTION == 'true'
+    runs-on: ubuntu-latest
+    environment: drift-detection
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: terraform-drift-cost-monitor
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+      TF_STATE_REGION: ${{ vars.TF_STATE_REGION }}
+      TF_VAR_bucket_name: ${{ vars.DRIFT_MONITORED_BUCKET }}
+      TF_VAR_environment: ${{ vars.DRIFT_ENVIRONMENT }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Check required environment configuration
+        shell: bash
+        env:
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+        run: |
+          for name in AWS_REGION AWS_ROLE_ARN TF_STATE_BUCKET TF_STATE_KEY TF_STATE_REGION TF_VAR_bucket_name TF_VAR_environment; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Required GitHub Environment variable is missing: $name" >&2
+              exit 1
+            fi
+          done
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4.0.1
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+      - name: Authenticate to AWS with OIDC
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: DriftDetection-${{ github.run_id }}
+      - name: Initialize approved remote state
+        shell: bash
+        run: |
+          terraform -chdir=terraform init -input=false -no-color \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=$TF_STATE_KEY" \
+            -backend-config="region=$TF_STATE_REGION" \
+            -backend-config="encrypt=true" \
+            -backend-config="use_lockfile=true"
+      - name: Run read-only refresh-only plan
+        id: plan
+        shell: bash
+        run: |
+          plan_file="$RUNNER_TEMP/drift.tfplan"
+          if terraform -chdir=terraform plan -refresh-only -detailed-exitcode -input=false -no-color -out="$plan_file"; then
+            plan_status=0
+          else
+            plan_status=$?
+          fi
+          case "$plan_status" in
+            0)
+              echo 'drift_detected=false' >> "$GITHUB_OUTPUT"
+              echo 'Terraform reports no drift.'
+              ;;
+            2)
+              echo 'drift_detected=true' >> "$GITHUB_OUTPUT"
+              echo 'Terraform detected drift; the plan will be analyzed.'
+              ;;
+            *)
+              echo "Terraform plan failed with exit code $plan_status." >&2
+              exit "$plan_status"
+              ;;
+          esac
+          terraform -chdir=terraform show -json "$plan_file" > "$RUNNER_TEMP/drift-plan.json"
+      - name: Set up Infracost
+        uses: infracost/actions/setup@v3
+        with:
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
+      - name: Estimate configuration monthly cost
+        run: infracost breakdown --path terraform --format json --out-file "$RUNNER_TEMP/infracost.json"
+      - name: Generate drift and cost report
+        run: >-
+          python scripts/analyze.py
+          --plan "$RUNNER_TEMP/drift-plan.json"
+          --cost "$RUNNER_TEMP/infracost.json"
+          --environment "$TF_VAR_environment"
+          --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          --output "$RUNNER_TEMP/report.json"
+      - name: Send Slack notification when enabled and required
+        if: vars.ENABLE_SLACK_NOTIFICATIONS == 'true' && (steps.plan.outputs.drift_detected == 'true' || vars.NOTIFICATION_ON_NO_DRIFT == 'true')
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python scripts/notify_slack.py --report "$RUNNER_TEMP/report.json" --send
+      - name: Print Slack preview when delivery is disabled
+        if: vars.ENABLE_SLACK_NOTIFICATIONS != 'true'
+        run: python scripts/notify_slack.py --report "$RUNNER_TEMP/report.json" --dry-run
+      - name: Remove temporary plan and report files
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/drift.tfplan" "$RUNNER_TEMP/drift-plan.json" "$RUNNER_TEMP/infracost.json" "$RUNNER_TEMP/report.json"

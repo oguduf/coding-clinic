@@ -1,0 +1,19 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.5",
+  "errored": false,
+  "resource_drift": [],
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket.example",
+      "mode": "managed",
+      "type": "aws_s3_bucket",
+      "name": "example",
+      "change": {
+        "actions": ["no-op"],
+        "before": {"bucket": "synthetic-example-bucket"},
+        "after": {"bucket": "synthetic-example-bucket"}
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+report.json
+drift-plan.json
+infracost.json
