@@ -1,191 +1,142 @@
-# Terraform Plan Policy Validator
+# Argo CD ApplicationSet and Kustomize Multi-Cluster GitOps
 
-A small, offline Python 3.11+ tool that validates Terraform plan JSON against a JSON policy file. It checks a documented subset of S3 public-access settings, required tags on selected AWS resource types, and an externally supplied monthly cost estimate. Policy failures return exit code `1`, so CI can block promotion before apply.
+This code-only lab defines one Nginx application and generates DEV, STAGE, and PROD Argo CD Applications from a simple ApplicationSet list generator. Kustomize keeps the shared Deployment and Service in one base and applies small environment overlays. No cluster connection, cloud credentials, or deployment is used by the lab.
 
-This is a code-only lab. It does not connect to a cloud account, require credentials, create resources, execute Terraform, or change Terraform state.
+## Original assignment
 
-## Original problem statement
+> Build an Argo CD ApplicationSet + Kustomize/Helm pattern that deploys the same application across multiple clusters/environments with environment-specific overlays.
 
-> Write a Python tool that validates Terraform plans against a policy-as-code ruleset (e.g., no public S3 buckets, required tags, cost thresholds) and fails the pipeline if violated.
+This implementation uses Kustomize to keep the project focused and avoid duplicated manifests.
 
-## Enterprise business scenario
+## Business scenario
 
-Shared infrastructure teams need repeatable checks before approving infrastructure changes. A plan may accidentally grant public storage access, omit ownership metadata, or exceed an approved budget. Running these checks in CI creates an early, consistent feedback point before an operator applies the plan. This tool is a preventive check; it does not replace cloud IAM, security monitoring, or a comprehensive policy engine.
+Platform teams often need to run the same service in several clusters while varying replica counts, namespaces, resource budgets, and environment settings. Copying manifests for each environment encourages drift. A shared base with small overlays keeps common behavior reviewable and makes deliberate differences explicit.
 
 ## Architecture
 
 ```mermaid
-flowchart LR
-  Plan[Terraform plan JSON] --> Validator[Python policy validator]
-  Policy[policies.json] --> Validator
-  Estimate[External cost estimate JSON] --> Validator
-  Validator --> S3[S3 security subset]
-  Validator --> Tags[Required tags]
-  Validator --> Cost[Cost threshold]
-  S3 --> Report[Terminal and optional JSON report]
-  Tags --> Report
-  Cost --> Report
-  Report -->|PASS, exit 0| Pass[CI continues]
-  Report -->|FAIL or REVIEW_REQUIRED, exit 1| Stop[CI fails for review]
-  Report -->|Invalid input, exit 2| Error[CI reports configuration/input error]
+flowchart TD
+  Git[Git repository] --> Set[Argo CD ApplicationSet]
+  Set -->|list: dev| Dev[demo-app-dev]
+  Set -->|list: stage| Stage[demo-app-stage]
+  Set -->|list: prod| Prod[demo-app-prod]
+  Dev --> DevK[Kustomize app/overlays/dev]
+  Stage --> StageK[Kustomize app/overlays/stage]
+  Prod --> ProdK[Kustomize app/overlays/prod]
+  DevK --> Base[Shared app/base Deployment and Service]
+  StageK --> Base
+  ProdK --> Base
+  Dev --> C1[Placeholder DEV cluster]
+  Stage --> C2[Placeholder STAGE cluster]
+  Prod --> C3[Placeholder PROD cluster]
 ```
 
-The validator reads local JSON files only. Terraform plan JSON can be produced outside this lab using `terraform show -json tfplan`; running Terraform is not part of the project.
+This diagram describes the intended flow. The repository does not connect to or configure any cluster.
 
 ## Repository structure
 
 ```text
-coding-clinic/
-├── .github/workflows/ci.yml
+argocd-multicluster-gitops/
+├── applicationset.yaml
+├── app/
+│   ├── base/
+│   │   ├── deployment.yaml
+│   │   ├── service.yaml
+│   │   └── kustomization.yaml
+│   └── overlays/
+│       ├── dev/
+│       ├── stage/
+│       └── prod/
+├── scripts/validate.sh
 ├── README.md
-└── terraform-plan-policy-validator/
-    ├── LICENSE
-    ├── .gitignore
-    ├── validator.py
-    ├── policies.json
-    ├── examples/
-    └── tests/test_validator.py
+├── LICENSE
+└── .gitignore
 ```
 
-## Prerequisites and installation
+The monorepo uses one repository-level workflow at [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml), with a path-scoped job for this lab. Keeping workflows at the repository root avoids duplicate workflow folders.
 
-- Python 3.11 or newer.
-- No third-party Python packages are required.
-- Terraform CLI is optional and is not used by the validator or tests.
+## Technology and prerequisites
 
-Clone or enter this project directory; there is no package installation step. The included plans and estimates are synthetic examples. To validate your own plan later, generate its JSON securely in your own workflow and provide a separately generated cost estimate.
+- Argo CD ApplicationSet and Kubernetes manifests.
+- Kustomize through `kubectl kustomize`; no Kubernetes context is needed.
+- Bash, Python 3.11+, and PyYAML for local validation.
+- `yamllint` for YAML linting in CI.
+- No Helm, Terraform, Docker build, cloud CLI, or credentials.
 
-## Policy configuration
-
-Edit `policies.json` without changing Python code:
-
-```json
-{
-  "required_tags": ["Environment", "Owner", "Project"],
-  "enforce_s3_private": true,
-  "max_monthly_cost_usd": 500
-}
-```
-
-The file must contain all three fields. Tag names must be a non-empty list of unique strings; `enforce_s3_private` must be a boolean; and the budget must be a finite, non-negative number. Invalid policy data is an input error and returns exit code `2`.
-
-## Policy behavior
-
-### S3 access checks
-
-When `enforce_s3_private` is true, the tool examines planned create/update actions for `aws_s3_bucket`, `aws_s3_bucket_acl`, `aws_s3_bucket_public_access_block`, and `aws_s3_bucket_policy`.
-
-- Public canned ACLs (`public-read`, `public-read-write`, `authenticated-read`) and ACL grants to the AWS global AllUsers or AuthenticatedUsers groups fail.
-- Each explicitly planned public access block must set all four controls to `true`: `block_public_acls`, `ignore_public_acls`, `block_public_policy`, and `restrict_public_buckets`. A planned `false` fails; a missing or unknown setting requires review.
-- An unconditional `Allow` bucket-policy statement with a wildcard principal fails. A wildcard principal with a condition requires review because this tool does not evaluate IAM policy conditions.
-- Unknown ACL/policy values, or policy documents the tool cannot interpret, require review and fail closed.
-- Absence of a public access block from a plan does not prove the bucket is public or private, so absence alone is not reported as a violation. Protections configured outside the plan are not assessed.
-
-These checks intentionally cover a narrow subset of S3 exposure behavior. They do not model every IAM principal, condition operator, access point, organization control, account-level setting, or cross-resource interaction. A `REVIEW_REQUIRED` result is not a claim that the resource is public; it means the tool cannot prove it safe.
-
-### Required tags
-
-The validator checks final planned `tags` and `tags_all` values for create and update operations on this explicit supported set: `aws_instance`, `aws_launch_template`, `aws_security_group`, `aws_vpc`, `aws_subnet`, `aws_ebs_volume`, `aws_kms_key`, `aws_iam_role`, `aws_lambda_function`, `aws_dynamodb_table`, `aws_rds_cluster`, `aws_db_instance`, `aws_s3_bucket`, `aws_sqs_queue`, `aws_sns_topic`, `aws_ecs_cluster`, `aws_ecs_service`, and `aws_eks_cluster`.
-
-Delete-only changes are ignored. Other resource types are not assumed to support tags. A missing required tag fails and identifies the Terraform resource address. An unknown planned required tag requires review and fails closed. `tags_all` is included because provider defaults or inherited tags may appear there; this is still based only on values present in the plan JSON.
-
-### Cost threshold
-
-Terraform plans do not provide reliable AWS prices. Supply a separate cost estimate created by an external estimation process:
-
-```json
-{"estimated_monthly_cost_usd": 420.00}
-```
-
-The estimate is compared to `max_monthly_cost_usd` using Python `Decimal`. Negative, non-finite, malformed, or missing estimates are input errors. An estimate equal to the limit passes; a greater estimate fails. This tool does not calculate AWS billing costs or call pricing APIs.
-
-## Usage
-
-From this project folder:
+Install the lightweight YAML parser for local validation if needed:
 
 ```bash
-python validator.py \
-  --plan examples/compliant-plan.json \
-  --policy policies.json \
-  --cost examples/compliant-cost.json
+python3 -m pip install PyYAML==6.0.3
 ```
 
-PowerShell:
+Install `kubectl` for your operating system. CI installs `kubectl` and `yamllint`. The validation script only uses `kubectl kustomize`; it never reads a kubeconfig or contacts a cluster.
 
-```powershell
-python .\validator.py `
-  --plan .\examples\compliant-plan.json `
-  --policy .\policies.json `
-  --cost .\examples\compliant-cost.json
-```
+## ApplicationSet
 
-To see a policy failure:
+`applicationset.yaml` uses one list generator with three entries. Each maps an environment to a placeholder API URL, namespace, and overlay path. A shared template generates `demo-app-dev`, `demo-app-stage`, and `demo-app-prod` in the `default` Argo CD project.
+
+The source URL uses `example-org`; replace it with the published repository URL before configuring Argo CD. `targetRevision` is `main`. The placeholder cluster URLs end in `.example.invalid` and must be replaced by cluster destinations already registered with Argo CD. Cluster registration is an external prerequisite and is not performed here.
+
+Automated sync and self-healing are enabled. Automatic pruning is disabled so deleting a manifest from Git does not automatically remove its live resource. Review deletion behavior before enabling pruning. `CreateNamespace=true` lets Argo CD create the destination namespace; each overlay also includes its Namespace manifest so the environment label is declarative.
+
+## Kustomize base and overlays
+
+The base contains a Deployment and ClusterIP Service for `demo-app`. The Deployment uses the version-pinned `nginxinc/nginx-unprivileged:1.27.5-alpine` image, listens on port 8080, and defines readiness and liveness probes, resource defaults, a non-root UID, a runtime-default seccomp profile, no privilege escalation, and dropped Linux capabilities.
+
+Each overlay references the base and patches only the environment-specific values:
+
+| Environment | Namespace | Replicas | CPU request / limit | Memory request / limit |
+| --- | --- | ---: | --- | --- |
+| DEV | `app-dev` | 1 | `50m` / `250m` | `64Mi` / `128Mi` |
+| STAGE | `app-stage` | 2 | `100m` / `500m` | `128Mi` / `256Mi` |
+| PROD | `app-prod` | 3 | `250m` / `1` | `256Mi` / `512Mi` |
+
+Each overlay labels resources and Pods with the environment and sets `APP_ENV`. Production resource settings do not replace normal protected-branch and pull-request review; approval automation is not configured.
+
+## Local validation
+
+Run these commands from this project directory. They render manifests locally and do not communicate with a cluster:
 
 ```bash
-python validator.py \
-  --plan examples/noncompliant-plan.json \
-  --policy policies.json \
-  --cost examples/over-budget-cost.json
+kubectl kustomize app/overlays/dev
+kubectl kustomize app/overlays/stage
+kubectl kustomize app/overlays/prod
+bash scripts/validate.sh
 ```
 
-To save a machine-readable summary, add `--output report.json`. The output includes overall status, check statuses, the count of planned create/update resources, and messages with affected resource addresses. It deliberately excludes planned tag values and policy contents. The report file is the only file the validator can write, and only when explicitly requested.
-
-### Example results
-
-The compliant fixture reports:
-
-```text
-S3 Security: PASS
-Required Tags: PASS
-Cost Threshold: PASS
-Resources checked: 3
-Overall Result: PASS
-```
-
-The noncompliant fixtures report `FAIL` for S3 security, required tags, and cost threshold, including resource-specific remediation messages.
-
-### Exit codes
-
-| Code | Meaning |
-| --- | --- |
-| `0` | All checks passed |
-| `1` | A policy was violated or needs review |
-| `2` | Input, policy, cost estimate, or optional report path is invalid |
-
-The plan input must be Terraform plan JSON with a top-level `format_version` string and a `resource_changes` array. Terraform state JSON is not accepted as a substitute.
-
-## Testing
-
-Run the offline suite using only the standard library:
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-Tests use synthetic plans and temporary files. They cover compliant/noncompliant plans, public ACL and policy behavior, access-block settings, tags, deletion and nested-module addresses, unknown values, cost boundaries and errors, malformed JSON, empty changes, and CLI exit codes. Tests do not use cloud credentials or contact external services.
+The validation script checks required files, parses YAML locally, verifies the ApplicationSet generator and overlay paths, renders all overlays, and checks namespaces, replicas, environment labels, and resource requests/limits. It rejects Kubernetes Secret manifests and credential-bearing URLs. Invalid YAML or missing configuration returns a nonzero exit code.
 
 ## GitHub Actions CI
 
-The single repository workflow, `.github/workflows/ci.yml`, runs this lab on pull requests and pushes to `main` when project files or the workflow change. It grants only `contents: read`, checks Python syntax and JSON fixtures, runs `unittest`, validates the passing example, and confirms the failing example returns policy exit code `1`. It does not authenticate to a cloud provider, execute Terraform, or modify infrastructure.
+The single workflow at the repository root runs on pull requests and pushes to `main` when this project or the workflow changes. It installs pinned Python and kubectl versions, runs yamllint, and executes the offline validation script. Repository permissions are limited to `contents: read`. CI does not log in to Argo CD or Kubernetes, access cloud accounts, or apply manifests.
 
-## Security considerations
+## How live deployment would work
 
-- Run policy validation before an approved deployment or apply stage.
-- No cloud credentials or network access are required by this validator.
-- CI has least-privilege read-only repository permission.
-- Invalid inputs and unresolved enforced-policy values fail closed.
-- Terraform plan JSON may contain secrets or sensitive values. Do not commit real plans, upload them to broadly accessible artifacts, or print their contents in logs. This repository uses synthetic fixtures only.
-- Reports include addresses and remediation messages, not plan values.
-- The tool is a preventive governance check, not a replacement for IAM controls, cloud security monitoring, provider validation, or enterprise policy engines.
+After publishing the repository, update the placeholder source URL. An Argo CD administrator would install the ApplicationSet in a configured Argo CD control plane. The destination clusters must first be registered, and the Argo CD AppProject must permit the intended destinations, namespaces, and resource kinds. Argo CD would generate one Application per list entry, render the selected Kustomize overlay, and reconcile desired state to its destination cluster.
 
-## Idempotency and limitations
+These are external operational prerequisites only. This lab does not perform them. Do not run `kubectl apply` or `argocd app sync` as part of local validation.
 
-The validator is read-only and deterministic for identical input files. It never modifies a plan, policy, Terraform state, or cloud resource. It writes a JSON report only when `--output` is explicitly requested. Cost estimates are supplied externally, and the S3 analysis intentionally recognizes only a documented subset of exposure patterns. Unknown cases require human review and cause CI to fail; the tool does not claim complete public-exposure analysis.
+## Security
 
-## Future improvements
+- Do not commit passwords, tokens, kubeconfigs, cloud credentials, or Kubernetes Secret objects.
+- The ApplicationSet contains placeholder cluster URLs and a placeholder source repository.
+- Use production AppProjects that restrict source repositories, destinations, namespaces, and resource kinds. The built-in `default` project is used only to keep the example small.
+- Use least-privilege Argo CD access and register clusters through an approved administrative process.
+- Protect the production branch and require pull-request reviews for production overlay changes.
+- The container runs as non-root with restricted privileges. For higher assurance, pin the image by a verified digest during release review.
+- Automated sync and self-healing can reconcile manual changes. Enabling prune can delete resources removed from Git, so review that behavior before turning it on.
+- External Secrets Operator or Sealed Secrets could be evaluated later if the application needs secrets; neither is configured here.
 
-Possible follow-up work includes richer policy rules, more provider-specific taggable resource types, reviewed IAM-condition analysis, and standardized integration with an external cost-estimation job. Those features are not part of this lab.
+## Idempotency and GitOps behavior
 
-## Lab scope
+Kubernetes manifests describe desired state. Kustomize composes that state from the shared base and one overlay. Argo CD compares rendered Git state with cluster state and, with automated sync and self-healing enabled, can reconcile drift. Stable API kind, namespace, and object names let Kubernetes update the same Deployment and Service when unchanged manifests are reconciled rather than creating duplicates.
 
-This is a code-only project. No AWS resources were deployed, no live cloud accounts were accessed, no cloud credentials were used, and no real Terraform plan or state was modified.
+Reconciliation is not risk-free: image, replica, resource, or deletion changes can affect availability. Review production changes and understand sync options before enabling them.
+
+## Limitations and future improvements
+
+This lab does not validate the ApplicationSet against a live Argo CD CRD schema, register clusters, test image availability, estimate capacity, or deploy workloads. Placeholder URLs and repository ownership must be replaced before use. AppProject restrictions, admission policies, secret delivery, and cloud security are outside its scope.
+
+Future work could add Argo CD schema validation, image digest pinning, admission policy examples, and a separately reviewed secrets integration.
+
+No cluster was contacted, no application was deployed, and no cloud resource was created for this lab.

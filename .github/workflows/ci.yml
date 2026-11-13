@@ -1,14 +1,14 @@
-name: Terraform plan policy validator
+name: Argo CD Kustomize validation
 
 on:
   pull_request:
     paths:
-      - 'terraform-plan-policy-validator/**'
+      - 'argocd-multicluster-gitops/**'
       - '.github/workflows/ci.yml'
   push:
     branches: [main]
     paths:
-      - 'terraform-plan-policy-validator/**'
+      - 'argocd-multicluster-gitops/**'
       - '.github/workflows/ci.yml'
 
 permissions:
@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: terraform-plan-policy-validator
+        working-directory: argocd-multicluster-gitops
     steps:
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -27,26 +27,13 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
-      - name: Validate Python syntax and JSON fixtures
-        run: |
-          python -m py_compile validator.py tests/test_validator.py
-          python -m json.tool policies.json > /dev/null
-          python -m json.tool examples/compliant-plan.json > /dev/null
-          python -m json.tool examples/noncompliant-plan.json > /dev/null
-          python -m json.tool examples/compliant-cost.json > /dev/null
-          python -m json.tool examples/over-budget-cost.json > /dev/null
-      - name: Run offline tests
-        run: python -m unittest discover -s tests -v
-      - name: Validate compliant fixture
-        run: python validator.py --plan examples/compliant-plan.json --policy policies.json --cost examples/compliant-cost.json
-      - name: Confirm noncompliant fixture fails policy
-        shell: bash
-        run: |
-          set +e
-          python validator.py --plan examples/noncompliant-plan.json --policy policies.json --cost examples/over-budget-cost.json
-          status=$?
-          set -e
-          if [ "$status" -ne 1 ]; then
-            echo "Expected policy failure exit code 1; received $status" >&2
-            exit 1
-          fi
+      - name: Set up kubectl and Kustomize
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.4
+      - name: Install YAML validation tools
+        run: python -m pip install PyYAML==6.0.3 yamllint==1.38.0
+      - name: Lint YAML manifests
+        run: yamllint -d relaxed applicationset.yaml app
+      - name: Validate overlays and ApplicationSet
+        run: bash scripts/validate.sh
