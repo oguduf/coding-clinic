@@ -1,155 +1,175 @@
-# Automated Terraform Drift Detection and Cost Monitoring
+# Reusable Helm Chart for a 12-Factor Kubernetes Application
 
-This code-only lab demonstrates a scheduled GitHub Actions pipeline for Terraform refresh-only drift detection, an independent Infracost monthly estimate, and an optional Slack notification. The scheduled workflow is disabled by default. The lab has not authenticated to a cloud provider, accessed real Terraform state, or sent Slack messages.
+This code-only lab provides a reusable Helm 3 chart for configuring a containerized application with environment-specific values, health probes, resource controls, autoscaling, disruption budgets, network restrictions, and optional External Secrets Operator integration.
 
-## Original assignment
+The default image is the public `nginxinc/nginx-unprivileged` image for rendering and learning. Nginx is only a demonstration workload; using it does not prove that an application follows all 12-factor principles. Replace it with an application image that supports the chart's non-root and read-only filesystem settings.
 
-> Create a CircleCI or GitHub Actions pipeline that runs infrastructure drift detection (Terraform plan + Infracost) on a schedule and posts results to Slack/Teams.
+No cluster has been contacted and no Kubernetes or cloud resources have been created.
 
-This implementation uses GitHub Actions and Slack Incoming Webhooks.
+## Original Code Clinic problem
 
-## Business problem
+> Write a Helm chart + values schema that deploys a 12-factor application with HPA, PDB, NetworkPolicy, and External Secrets Operator integration.
 
-Manual changes made outside Terraform can cause state and remote infrastructure to diverge. A periodic refresh-only plan can identify certain remote-object differences from recorded state, while a cost estimator can report an estimate for the configured Terraform resources. A concise report gives operators a review starting point without automatically changing infrastructure.
+## Enterprise business problem
+
+Teams often copy Kubernetes manifests between environments. Duplicated YAML drifts over time, so security, probes, resource budgets, and operational settings become inconsistent. A shared chart with reviewed DEV, STAGE, and PROD values keeps the deployment shape reusable while making environment-specific differences visible.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-  Schedule[Weekly GitHub Actions schedule] --> Gate{ENABLE_LIVE_DRIFT_DETECTION is true?}
-  Gate -->|No, default| Safe[Print disabled notice; no cloud or Slack access]
-  Gate -->|Yes, authorized setup| OIDC[Assume restricted AWS role with OIDC]
-  OIDC --> Backend[Initialize approved remote backend]
-  Backend --> Plan[Terraform refresh-only plan]
-  Plan -->|Exit 0 or 2| JSON[Convert plan to JSON]
-  Plan -->|Other exit code| Error[Fail workflow]
-  JSON --> Analyze[Analyze affected resources]
-  Analyze --> Cost[Infracost monthly estimate]
-  Cost --> Report[Safe JSON and terminal report]
-  Report --> Slack{Slack delivery explicitly enabled?}
-  Slack -->|No| Preview[Print dry-run message preview]
-  Slack -->|Yes and notification condition met| Notify[Post to Slack webhook]
+  Repo[GitHub repository] --> CI[Validation-only CI]
+  Repo --> Values[Shared Helm chart and environment values]
+  Values --> Templates[Helm templates plus JSON Schema]
+  Templates --> Deployment[Deployment and Service]
+  Templates --> Config[Non-sensitive ConfigMap]
+  Templates --> Scaling[Optional HPA and PDB]
+  Templates --> Network[Restrictive NetworkPolicy]
+  Templates --> ESO[Optional ExternalSecret]
+  ESO --> Store[Existing SecretStore or ClusterSecretStore]
+  ESO --> K8sSecret[Operator-managed Kubernetes Secret]
+  K8sSecret --> Deployment
 ```
 
-The enabled path is a future operational capability, not a deployed environment. The validation workflow uses only synthetic files and does not run this scheduled workflow.
+The chart creates an ExternalSecret only when enabled. It assumes the External Secrets Operator, its CRDs, a compatible store, and the necessary store permissions already exist. The chart does not install or configure those prerequisites.
 
 ## Repository structure
 
 ```text
-terraform-drift-cost-monitor/
-├── terraform/
-│   ├── main.tf
-│   ├── variables.tf
-│   └── outputs.tf
-├── scripts/
-│   ├── analyze.py
-│   └── notify_slack.py
-├── config/settings.example.json
-├── examples/
-│   ├── no-drift-plan.json
-│   ├── drift-plan.json
-│   └── infracost-example.json
-├── tests/
-│   ├── test_analyze.py
-│   └── test_notify.py
+helm-12factor-app-chart/
+├── charts/twelve-factor-app/
+│   ├── Chart.yaml
+│   ├── values.yaml
+│   ├── values.schema.json
+│   └── templates/
+│       ├── _helpers.tpl
+│       ├── deployment.yaml
+│       ├── service.yaml
+│       ├── configmap.yaml
+│       ├── hpa.yaml
+│       ├── pdb.yaml
+│       ├── networkpolicy.yaml
+│       └── externalsecret.yaml
+├── environments/
+│   ├── dev-values.yaml
+│   ├── stage-values.yaml
+│   └── prod-values.yaml
+├── scripts/validate.sh
 ├── README.md
 ├── LICENSE
 └── .gitignore
 ```
 
-This lab follows the monorepo's single workflow folder: the CI job is in [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml), and the scheduled workflow is [`../.github/workflows/drift-detection.yml`](../.github/workflows/drift-detection.yml). No workflow files are nested in this project directory.
+In this monorepo, CI lives in the single root workflow directory at `../.github/workflows/ci.yml`. The Problem 11 job is path-scoped to this project.
 
-## How drift detection works
+## Prerequisites
 
-Terraform's `plan -refresh-only` compares remote object observations with Terraform's recorded state and prepares a plan to update state observations. It does not compare the configuration to the live resource in the same way as a normal plan, and it does not by itself prove the resource still matches the desired configuration. Review the plan before any state update; this lab never runs `terraform apply` or `apply -refresh-only`.
+- Helm 3.16.4 or a compatible Helm 3 release.
+- Bash for `scripts/validate.sh`.
+- A POSIX-compatible shell environment such as Linux, macOS, WSL, or Git Bash on Windows.
 
-With `-detailed-exitcode`, Terraform returns `0` when the plan is empty, `2` when changes are present, and `1` for an error. The scheduled workflow explicitly treats `0` and `2` as successful planning outcomes and fails on other exit codes. It never hides errors with `continue-on-error`.
+No kubeconfig, cloud CLI, credentials, secret-manager access, or Kubernetes cluster is needed for local linting and rendering.
 
-`analyze.py` reads plan JSON and uses the `resource_drift` entries when present, falling back to `resource_changes` for older or synthetic inputs. It reports addresses and actions only; it does not include before/after attribute values. Reports and Slack messages include an environment and run ID so repeated scheduled notifications can be distinguished. Malformed inputs and Terraform plans marked errored produce an error status and nonzero exit code.
+## How the chart works
 
-## Infracost and cost interpretation
+The chart is named `twelve-factor-app`, uses Helm chart API v2, and has chart version `0.1.0`. It renders declarative Kubernetes resources from `values.yaml` and a selected environment values file:
 
-Infracost estimates the monthly cost of the Terraform configuration. The report displays that amount separately from drift and always uses `N/A` for drift cost impact because a refresh-only drift plan is not a reliable estimate of the financial impact of out-of-band changes. A cost estimate is not an actual cloud bill or a promise of savings. Offline examples use synthetic cost data and no pricing API.
+- **Deployment:** configures the image, ports, environment, ConfigMap and secret references, resource requests and limits, probes, and restricted security contexts. Rolling updates keep at least one pod available during a normal rollout.
+- **Service:** exposes the selected pods internally as ClusterIP by default. No public endpoint is created by default.
+- **ConfigMap:** contains only non-sensitive settings. A checksum annotation causes a Deployment rollout when the rendered ConfigMap changes.
+- **HPA:** optionally scales the Deployment using CPU utilization. Deployment replicas are omitted when HPA is enabled.
+- **PDB:** optionally limits voluntary disruptions using `minAvailable`.
+- **NetworkPolicy:** selects this chart's pods, allows HTTP only from configured namespace selectors, and restricts egress to configured DNS and CIDR destinations.
+- **ExternalSecret:** optionally asks the existing operator to populate a Kubernetes Secret. The Deployment references the target Secret keys as environment variables.
 
-The live workflow requires an `INFRACOST_API_KEY` GitHub Environment secret. When enabled, the Infracost CLI may send resource configuration details to its pricing service; review organizational data handling requirements before enabling it.
+### 12-factor configuration
 
-## Slack notification behavior
+The chart supports configuration through environment variables and mounted/runtime configuration rather than embedding environment-specific settings in an image. It does not implement the 12 factors for an application automatically. Application code still needs to handle configuration, logs, processes, backing services, concurrency, disposability, and the other factors appropriately.
 
-`notify_slack.py` formats a concise message with environment, drift status, changed-resource count, estimate, and review status. Its default behavior is dry-run: it prints a preview and performs no network request. Delivery requires the explicit `--send` option and `SLACK_WEBHOOK_URL`. The workflow also requires the separate `ENABLE_SLACK_NOTIFICATIONS=true` variable, and by default sends only when drift is detected. `NOTIFICATION_ON_NO_DRIFT=true` can explicitly allow no-drift notifications. The webhook URL belongs in a GitHub Environment secret, never in source code or logs.
+The `app.config` map is rendered into a ConfigMap and exposed through `envFrom`. Do not put passwords, tokens, private keys, or API keys there. Use `secretEnv` to reference a pre-existing Secret or enable ExternalSecret integration for operator-managed values.
 
-## Configuration
+### HPA
 
-`config/settings.example.json` documents safe defaults:
+When enabled, the chart creates an `autoscaling/v2` HPA targeting the Deployment's CPU utilization. CPU requests must be set because utilization is calculated relative to requests. The cluster must expose resource metrics, commonly through Metrics Server. HPA cannot make an overloaded or unhealthy application reliable by itself; set requests based on measurement and configure sensible scale bounds.
 
-```json
-{
-  "environment": "dev",
-  "drift_detection_enabled": false,
-  "slack_notifications_enabled": false,
-  "notification_on_no_drift": false
-}
-```
+The template rejects `maxReplicas < minReplicas`. CPU requests are part of the required resource schema.
 
-The schedule workflow does not read or create these GitHub settings automatically. Live execution requires the repository variable `ENABLE_LIVE_DRIFT_DETECTION=true`. The GitHub Environment named `drift-detection` must be created and protected separately, with required approvals and these variables:
+### PDB
 
-- `AWS_ROLE_ARN`, `AWS_REGION`
-- `TF_STATE_BUCKET`, `TF_STATE_KEY`, `TF_STATE_REGION`
-- `DRIFT_MONITORED_BUCKET`, `DRIFT_ENVIRONMENT` (`dev`, `stage`, or `prod`)
-- Optional `ENABLE_SLACK_NOTIFICATIONS=true` and `NOTIFICATION_ON_NO_DRIFT=true`
+The optional `policy/v1` PodDisruptionBudget uses `minAvailable` and selects the same pods as the Deployment. The chart rejects a `minAvailable` value greater than or equal to the lowest configured replica count because that can block voluntary maintenance from evicting any pod.
 
-Secrets for the environment are `INFRACOST_API_KEY` and, only if Slack delivery is enabled, `SLACK_WEBHOOK_URL`. These are documentation requirements, not values configured by this lab.
+A PDB helps coordinate voluntary disruptions such as node drain. It does not guarantee availability during node, zone, application, or dependency failures. DEV uses one replica and disables the PDB so it does not obstruct routine maintenance.
 
-## Terraform example and live prerequisites
+### NetworkPolicy
 
-`terraform/` contains a small AWS S3 bucket example with no credentials, account IDs, or real backend settings. CI initializes it with `-backend=false`, so validation does not access any remote state. The example bucket name is a placeholder and is not applied.
+The default policy restricts ingress to pods in the `ingress-nginx` namespace and allows DNS egress to pods in the `kube-system` namespace selected with `k8s-app: kube-dns`. These selectors are common examples, not universal conventions; verify the labels used by your cluster. Add only the egress CIDRs and ports the application needs.
 
-Real drift checks would require an existing Terraform-managed environment, matching configuration and state, an approved remote backend, read-only AWS permissions for the managed resources, narrowly scoped backend state/lock access, a protected GitHub Environment, and a trusted runner. The AWS role should trust only the repository's protected branch/environment through GitHub OIDC. Do not give the role resource write permissions. Backend locking can require write/delete access to the lock object even when the resource permissions are read-only. Configure these controls outside this lab.
+NetworkPolicy enforcement requires a compatible CNI. A cluster may accept the resource but fail to enforce it. Validate the rendered selectors and test enforcement in a non-production cluster before relying on the policy.
 
-## Local offline demonstration
+### External Secrets Operator
 
-From this project directory:
+STAGE and PROD show synthetic ExternalSecret references. They do not contain secret values or real secret-manager paths. The generated Secret is consumed by the Deployment as environment variables.
+
+Before enabling this feature in a real environment, an administrator must install the operator and CRDs, configure a namespaced SecretStore or ClusterSecretStore, and grant least-privilege access to the necessary external secret paths. Store scope and remote provider permissions determine the real secret access boundary. Missing operator, CRD, store, permissions, or remote keys prevents synchronization.
+
+### Values schema
+
+`values.schema.json` is a JSON Schema consumed by Helm during lint and template operations. It checks types and bounds for common settings such as image repository, ports, replicas, HPA ranges, CPU target, PDB values, network selectors, and ExternalSecret data. The helper templates handle cross-field checks that are clearer at render time, including HPA minimum/maximum and PDB availability versus the scale floor.
+
+## DEV, STAGE, and PROD examples
+
+All environments use the same chart. The values files override only environment-specific settings:
+
+| Environment | Replicas / HPA | PDB | Resource requests | ExternalSecret |
+| --- | --- | --- | --- | --- |
+| DEV | 1 / disabled | disabled | 50m CPU, 64Mi memory | disabled |
+| STAGE | 2–4 / CPU target 70% | minAvailable 1 | 200m CPU, 256Mi memory | enabled with synthetic key |
+| PROD | 3–6 / CPU target 65% | minAvailable 2 | 500m CPU, 512Mi memory | enabled with synthetic key |
+
+STAGE and PROD include `198.51.100.25/32`, a documentation-only address, as an example allowed egress destination. Replace it with a real, narrowly scoped dependency CIDR only after reviewing the network design.
+
+## Local validation
+
+From this project directory, run:
 
 ```bash
-python scripts/analyze.py \
-  --plan examples/drift-plan.json \
-  --cost examples/infracost-example.json \
-  --environment dev
-
-python scripts/notify_slack.py \
-  --report report.json \
-  --dry-run
-
-python -m unittest discover -s tests -v
+helm lint charts/twelve-factor-app
+helm template demo-dev charts/twelve-factor-app -n app-dev -f environments/dev-values.yaml
+helm template demo-stage charts/twelve-factor-app -n app-stage -f environments/stage-values.yaml
+helm template demo-prod charts/twelve-factor-app -n app-prod -f environments/prod-values.yaml
+bash scripts/validate.sh
 ```
 
-The analyzer writes `report.json` by default. Use `--output path.json` to choose a different local report path. Try `examples/no-drift-plan.json` for the no-drift case. Tests use only synthetic files and mocked webhook delivery; they do not need AWS credentials, a Terraform backend, Infracost credentials, or Slack access.
+The script lints the chart, renders all three environments, checks that optional resources appear only in the intended environments, confirms the HPA-enabled Deployment omits a fixed replica count, and verifies Helm rejects an invalid image repository and invalid HPA bounds. These commands only render YAML locally. They do not install or upgrade a release.
 
-## GitHub Actions workflows
+## GitHub Actions CI
 
-The repository's one `.github/workflows` folder contains:
+The repository's shared workflow in `../.github/workflows/ci.yml` runs on pull requests and pushes to `main` when this project or the workflow changes. Its Problem 11 job checks out the repository, installs a pinned Helm version, runs `helm lint`, renders each environment, and runs the local validation script. Permissions are limited to `contents: read`. CI does not authenticate to Kubernetes or a cloud provider and does not deploy.
 
-- `ci.yml`: runs on pull requests and pushes to `main`; performs Python syntax checks, offline unit tests, Terraform formatting and validation with backend initialization disabled, fixture analysis, and Slack dry-run tests. Permissions are `contents: read`.
-- `drift-detection.yml`: scheduled weekly on Monday at 08:00 UTC and manually dispatchable. When the enablement variable is absent or false, it only prints that live detection is disabled. The live job requests `id-token: write` only after explicit enablement and uses OIDC rather than static cloud keys. No backend, AWS role, secret, or environment approval is provisioned here.
+## Security considerations
 
-When an administrator explicitly enables the live workflow, it initializes only the approved backend, runs a refresh-only plan, analyzes JSON output, generates the Infracost estimate, and optionally sends Slack. It never runs apply or destroy. It does not upload plan files as artifacts.
+- Keep credentials and secret values out of chart values, ConfigMaps, source control, and rendered artifacts.
+- Use External Secrets Operator references or pre-existing Kubernetes Secrets; scope store permissions to the required remote paths.
+- Use Kubernetes RBAC with least privilege and protect production values changes with review.
+- Use image tags that identify a reviewed release; for production, consider pinning by digest and maintain a controlled update process.
+- Run compatible non-root images. The default pod uses UID/GID 101, a read-only root filesystem, dropped Linux capabilities, no privilege escalation, and RuntimeDefault seccomp. Images must support these settings and writable temporary paths.
+- Set realistic resource requests and limits and make probes reflect application readiness and liveness.
+- Restrict ingress and egress intentionally. Validate namespace labels, DNS labels, and CNI enforcement in the target cluster.
+- Helm values and templates do not replace cluster policy, admission controls, image scanning, secret-store IAM, network segmentation, or runtime monitoring.
 
-## Security
+## Idempotency and operations
 
-- No AWS credentials, cloud account IDs, state files, or real Terraform plans are committed.
-- CI has read-only repository permission and uses `terraform init -backend=false`; it does not contact AWS.
-- The scheduled job is disabled unless the repository variable is explicitly set. Its live job uses short-lived OIDC credentials and a separately protected GitHub Environment.
-- Restrict the AWS role to read-only access on managed resources and the minimum remote-state access. The S3 backend may also need narrowly scoped permissions on its state lock object. Restrict OIDC trust to the protected repository branch and environment.
-- Store the Infracost API key and Slack webhook in GitHub Environment secrets. Do not echo them or put them in Terraform files.
-- Terraform plan JSON can contain sensitive values. The live workflow keeps plan files in the runner's temporary directory, does not upload them, excludes values from reports, and removes temporary files at the end of the job.
-- Slack delivery is opt-in at both the workflow variable and script flag. Dry-run performs no network request.
-- No automatic remediation, `terraform apply`, `terraform destroy`, or state-writing refresh-only apply is used.
+Helm templates describe desired Kubernetes objects. Rendering the same chart version with the same values produces equivalent manifests, and Helm upgrades update the managed resources instead of intentionally creating duplicates. HPA adjusts replicas within its configured range, and External Secrets Operator reconciles the target Secret. NetworkPolicy and PDB are declarative resources.
 
-## Idempotency and limitations
+An upgrade can still change availability or access. Image, probe, resource, selector, PDB, secret mapping, and network changes need review. For production, use a protected deployment path, inspect rendered diffs, monitor rollouts, and keep a tested rollback plan. A PDB can also delay maintenance if configured too strictly.
 
-Repeated analysis of identical plan and cost JSON produces the same report. The scripts do not modify infrastructure or Terraform state. A scheduled run can notify repeatedly about unresolved drift. Cost data is a configuration estimate, not observed billing, and drift cost impact remains `N/A` unless a separately reviewed method can calculate it reliably.
+External Secrets Operator updates the Kubernetes Secret, but a process that consumes a Secret through environment variables does not see changed values until its pods restart. Plan rotation so the workload restarts safely, or use a reload-aware application and a mounted Secret volume pattern.
 
-This lab does not access a real backend, validate IAM policies, verify actual Slack delivery, or guarantee complete drift detection for every provider/resource behavior. The sample backend is intentionally unconfigured and the sample S3 bucket is not created.
+## Limitations and future improvements
 
-## Future improvements
+This lab does not validate Kubernetes admission behavior against a live cluster, check that NetworkPolicy is enforced by a CNI, verify External Secrets Operator CRDs or remote provider permissions, scan images, or deploy the chart. The Nginx workload is a rendering example, not a complete 12-factor service. Network labels and DNS selectors may differ between clusters.
 
-Possible follow-up work includes reviewed per-environment state configuration, policy checks over drift reports, richer cost baselines, and organization-specific retention controls for sensitive plans. Any live integration should remain separately approved and least-privileged.
+Future work could add offline Kubernetes schema validation, chart packaging and provenance, image digest verification, and policy tests for organization-specific network and security requirements.
+
+This project is code-only. No Kubernetes resources were deployed, no cloud resources were created, no secret manager was accessed, and nothing was pushed to GitHub.
+

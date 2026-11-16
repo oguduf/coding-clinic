@@ -1,0 +1,89 @@
+nameOverride: ""
+fullnameOverride: ""
+
+replicaCount: 2
+
+image:
+  repository: nginxinc/nginx-unprivileged
+  tag: "1.27.5-alpine"
+  pullPolicy: IfNotPresent
+
+containerPort: 8080
+service:
+  type: ClusterIP
+  port: 80
+
+app:
+  config:
+    APP_ENV: development
+    LOG_LEVEL: info
+
+env: []
+secretEnv: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+probes:
+  readiness:
+    path: /
+    initialDelaySeconds: 3
+    periodSeconds: 10
+  liveness:
+    path: /
+    initialDelaySeconds: 10
+    periodSeconds: 20
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 101
+  runAsGroup: 101
+  fsGroup: 101
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+pdb:
+  enabled: false
+  minAvailable: 1
+
+networkPolicy:
+  enabled: true
+  ingress:
+    fromNamespaces:
+      - matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+  egress:
+    allowDNS: true
+    dnsNamespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    dnsPodSelector:
+      matchLabels:
+        k8s-app: kube-dns
+    extraCIDRs: []
+
+externalSecrets:
+  enabled: false
+  secretStore:
+    name: example-secret-store
+    kind: ClusterSecretStore
+  targetSecretName: app-secrets
+  refreshInterval: 1h
+  data: []
+

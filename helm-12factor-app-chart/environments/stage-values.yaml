@@ -1,0 +1,38 @@
+image:
+  repository: nginxinc/nginx-unprivileged
+  tag: "1.27.5-alpine"
+app:
+  config:
+    APP_ENV: stage
+    LOG_LEVEL: info
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+pdb:
+  enabled: true
+  minAvailable: 1
+networkPolicy:
+  enabled: true
+  egress:
+    extraCIDRs:
+      - 198.51.100.25/32
+externalSecrets:
+  enabled: true
+  secretStore:
+    name: example-stage-store
+    kind: ClusterSecretStore
+  targetSecretName: app-stage-secrets
+  data:
+    - secretKey: DATABASE_PASSWORD
+      remoteRef:
+        key: demo/stage/database
+        property: password
