@@ -1,0 +1,40 @@
+name: Coding Clinic CI
+
+on:
+  pull_request:
+    paths:
+      - 'helm-12factor-app-chart/**'
+      - '.github/workflows/ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'helm-12factor-app-chart/**'
+      - '.github/workflows/ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-helm-chart:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: helm-12factor-app-chart
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up pinned Helm
+        uses: azure/setup-helm@v4.2.0
+        with:
+          version: v3.16.4
+      - name: Lint chart
+        run: helm lint charts/twelve-factor-app
+      - name: Render DEV, STAGE, and PROD
+        run: |
+          for environment in dev stage prod; do
+            helm template "demo-$environment" charts/twelve-factor-app \
+              --namespace "app-$environment" \
+              -f "environments/$environment-values.yaml" > /dev/null
+          done
+      - name: Run offline validation
+        run: bash scripts/validate.sh

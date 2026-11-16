@@ -1,0 +1,13 @@
+{{- if .Values.app.config }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "twelve-factor-app.fullname" . }}
+  labels:
+    {{- include "twelve-factor-app.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.app.config }}
+  {{ $key }}: {{ $value | toString | quote }}
+  {{- end }}
+{{- end }}
+
