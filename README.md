@@ -1,175 +1,190 @@
-# Reusable Helm Chart for a 12-Factor Kubernetes Application
+# Python Kubernetes Secret Sync Controller
 
-This code-only lab provides a reusable Helm 3 chart for configuring a containerized application with environment-specific values, health probes, resource controls, autoscaling, disruption budgets, network restrictions, and optional External Secrets Operator integration.
+This code-only lab implements a small Kopf controller that watches annotated ConfigMaps, reads a JSON string secret from AWS Secrets Manager, and creates or updates an owned Kubernetes Secret in the same namespace. It uses Boto3's standard AWS credential chain and the Kubernetes Python client.
 
-The default image is the public `nginxinc/nginx-unprivileged` image for rendering and learning. Nginx is only a demonstration workload; using it does not prove that an application follows all 12-factor principles. Replace it with an application image that supports the chart's non-root and read-only filesystem settings.
-
-No cluster has been contacted and no Kubernetes or cloud resources have been created.
+The project has not been deployed. Tests use mocked AWS and Kubernetes clients; no real credentials or secret values are used.
 
 ## Original Code Clinic problem
 
-> Write a Helm chart + values schema that deploys a 12-factor application with HPA, PDB, NetworkPolicy, and External Secrets Operator integration.
+> Develop a Python Kubernetes operator (or controller) that watches for ConfigMaps with a specific annotation and automatically creates corresponding Kubernetes Secrets from AWS Secrets Manager / Azure Key Vault.
 
-## Enterprise business problem
+This implementation uses AWS Secrets Manager as the initial provider and does not include Azure Key Vault.
 
-Teams often copy Kubernetes manifests between environments. Duplicated YAML drifts over time, so security, probes, resource budgets, and operational settings become inconsistent. A shared chart with reviewed DEV, STAGE, and PROD values keeps the deployment shape reusable while making environment-specific differences visible.
+## Enterprise business scenario
+
+Applications often consume credentials from Kubernetes Secrets while the organization treats AWS Secrets Manager as the source of truth. Manually copying secret values creates drift and exposes values to extra operators. This controller automates the transfer for explicitly opted-in ConfigMaps, checks ownership before modifying a Secret, and skips writes when the current values match.
 
 ## Architecture
 
 ```mermaid
-flowchart TD
-  Repo[GitHub repository] --> CI[Validation-only CI]
-  Repo --> Values[Shared Helm chart and environment values]
-  Values --> Templates[Helm templates plus JSON Schema]
-  Templates --> Deployment[Deployment and Service]
-  Templates --> Config[Non-sensitive ConfigMap]
-  Templates --> Scaling[Optional HPA and PDB]
-  Templates --> Network[Restrictive NetworkPolicy]
-  Templates --> ESO[Optional ExternalSecret]
-  ESO --> Store[Existing SecretStore or ClusterSecretStore]
-  ESO --> K8sSecret[Operator-managed Kubernetes Secret]
-  K8sSecret --> Deployment
+flowchart LR
+  CM[Annotated ConfigMap] -->|Kopf create/update event| Controller[Python controller]
+  Controller -->|GetSecretValue, standard AWS identity| AWS[AWS Secrets Manager]
+  AWS -->|SecretString JSON| Controller
+  Controller -->|get/create/patch in same namespace| K8sSecret[Kubernetes Secret]
+  K8sSecret --> App[Application workload]
+  RBAC[Namespace-scoped Role and RoleBinding] --> Controller
+  IAM[EKS Pod Identity or IRSA role] --> AWS
 ```
 
-The chart creates an ExternalSecret only when enabled. It assumes the External Secrets Operator, its CRDs, a compatible store, and the necessary store permissions already exist. The chart does not install or configure those prerequisites.
+The ConfigMap contains only an AWS secret reference and the target Kubernetes Secret name. Secret values do not pass through ConfigMap data.
 
 ## Repository structure
 
 ```text
-helm-12factor-app-chart/
-├── charts/twelve-factor-app/
-│   ├── Chart.yaml
-│   ├── values.yaml
-│   ├── values.schema.json
-│   └── templates/
-│       ├── _helpers.tpl
-│       ├── deployment.yaml
-│       ├── service.yaml
-│       ├── configmap.yaml
-│       ├── hpa.yaml
-│       ├── pdb.yaml
-│       ├── networkpolicy.yaml
-│       └── externalsecret.yaml
-├── environments/
-│   ├── dev-values.yaml
-│   ├── stage-values.yaml
-│   └── prod-values.yaml
-├── scripts/validate.sh
+k8s-secret-sync-controller/
+├── controller.py
+├── requirements.txt
+├── examples/configmap.yaml
+├── deploy/
+│   ├── deployment.yaml
+│   ├── serviceaccount.yaml
+│   └── rbac.yaml
+├── tests/test_controller.py
 ├── README.md
 ├── LICENSE
 └── .gitignore
 ```
 
-In this monorepo, CI lives in the single root workflow directory at `../.github/workflows/ci.yml`. The Problem 11 job is path-scoped to this project.
+CI is kept in the repository's single root workflow folder at `../.github/workflows/ci.yml`.
 
 ## Prerequisites
 
-- Helm 3.16.4 or a compatible Helm 3 release.
-- Bash for `scripts/validate.sh`.
-- A POSIX-compatible shell environment such as Linux, macOS, WSL, or Git Bash on Windows.
+- Python 3.11 or newer.
+- pip for installing the project dependencies.
+- AWS credentials and a Kubernetes cluster are **not** needed for tests.
+- A real deployment would require a pre-created target namespace, an image built and published separately, AWS workload identity, and the RBAC manifests reviewed for that namespace.
 
-No kubeconfig, cloud CLI, credentials, secret-manager access, or Kubernetes cluster is needed for local linting and rendering.
+## How the controller works
 
-## How the chart works
+Kopf registers create and update handlers for core-v1 ConfigMaps. An event is ignored unless `secret-sync.example.com/enabled` is set to `"true"`. For updates, the handler only reconciles when one of its three synchronization annotations changes; this prevents unrelated ConfigMap edits and Kopf's own progress annotations from triggering another AWS lookup.
 
-The chart is named `twelve-factor-app`, uses Helm chart API v2, and has chart version `0.1.0`. It renders declarative Kubernetes resources from `values.yaml` and a selected environment values file:
+For an opted-in ConfigMap, the controller:
 
-- **Deployment:** configures the image, ports, environment, ConfigMap and secret references, resource requests and limits, probes, and restricted security contexts. Rolling updates keep at least one pod available during a normal rollout.
-- **Service:** exposes the selected pods internally as ClusterIP by default. No public endpoint is created by default.
-- **ConfigMap:** contains only non-sensitive settings. A checksum annotation causes a Deployment rollout when the rendered ConfigMap changes.
-- **HPA:** optionally scales the Deployment using CPU utilization. Deployment replicas are omitted when HPA is enabled.
-- **PDB:** optionally limits voluntary disruptions using `minAvailable`.
-- **NetworkPolicy:** selects this chart's pods, allows HTTP only from configured namespace selectors, and restricts egress to configured DNS and CIDR destinations.
-- **ExternalSecret:** optionally asks the existing operator to populate a Kubernetes Secret. The Deployment references the target Secret keys as environment variables.
+1. Validates the AWS secret reference and target Secret name.
+2. Reads the target Secret in the ConfigMap's namespace.
+3. Refuses to continue if an existing Secret lacks the controller and source-ConfigMap ownership annotations.
+4. Calls AWS Secrets Manager `GetSecretValue` using Boto3's standard credential provider chain.
+5. Validates that `SecretString` is a non-empty JSON object whose keys are valid Secret data keys and whose values are strings.
+6. Creates the Secret if it does not exist, updates it if decoded data differs, or skips the write when it is unchanged.
 
-### 12-factor configuration
+The Kubernetes API receives values through the Secret `stringData` field. The API stores the Secret's data encoded for transport; base64 encoding is not encryption. The controller decodes the existing `data` only in memory to compare it with the AWS value.
 
-The chart supports configuration through environment variables and mounted/runtime configuration rather than embedding environment-specific settings in an image. It does not implement the 12 factors for an application automatically. Application code still needs to handle configuration, logs, processes, backing services, concurrency, disposability, and the other factors appropriately.
+Invalid annotations, invalid payloads, missing AWS secrets, access denied errors, and unmanaged Secrets are reported as permanent configuration/security errors. AWS connectivity and retryable Kubernetes API errors use Kopf temporary errors with retry. Error messages and logs do not contain secret values.
 
-The `app.config` map is rendered into a ConfigMap and exposed through `envFrom`. Do not put passwords, tokens, private keys, or API keys there. Use `secretEnv` to reference a pre-existing Secret or enable ExternalSecret integration for operator-managed values.
+Deleting or disabling a ConfigMap does not delete the Kubernetes Secret.
 
-### HPA
+## ConfigMap annotations
 
-When enabled, the chart creates an `autoscaling/v2` HPA targeting the Deployment's CPU utilization. CPU requests must be set because utilization is calculated relative to requests. The cluster must expose resource metrics, commonly through Metrics Server. HPA cannot make an overloaded or unhealthy application reliable by itself; set requests based on measurement and configure sensible scale bounds.
+The required annotations are:
 
-The template rejects `maxReplicas < minReplicas`. CPU requests are part of the required resource schema.
+| Annotation | Purpose |
+| --- | --- |
+| `secret-sync.example.com/enabled` | Must be `"true"` to opt in |
+| `secret-sync.example.com/aws-secret-name` | AWS Secrets Manager secret name or ARN |
+| `secret-sync.example.com/target-secret-name` | Secret name to create or update in the same namespace |
 
-### PDB
+See [examples/configmap.yaml](examples/configmap.yaml). Its identifiers and non-sensitive data are synthetic. Do not put passwords, tokens, or secret values in ConfigMap annotations or data.
 
-The optional `policy/v1` PodDisruptionBudget uses `minAvailable` and selects the same pods as the Deployment. The chart rejects a `minAvailable` value greater than or equal to the lowest configured replica count because that can block voluntary maintenance from evicting any pod.
+The target name must be a valid Kubernetes DNS subdomain. The controller requires the ConfigMap to have a name and namespace.
 
-A PDB helps coordinate voluntary disruptions such as node drain. It does not guarantee availability during node, zone, application, or dependency failures. DEV uses one replica and disables the PDB so it does not obstruct routine maintenance.
+## AWS Secrets Manager integration
 
-### NetworkPolicy
+This first version supports only `SecretString` containing a JSON object of string values, for example:
 
-The default policy restricts ingress to pods in the `ingress-nginx` namespace and allows DNS egress to pods in the `kube-system` namespace selected with `k8s-app: kube-dns`. These selectors are common examples, not universal conventions; verify the labels used by your cluster. Add only the egress CIDRs and ports the application needs.
-
-NetworkPolicy enforcement requires a compatible CNI. A cluster may accept the resource but fail to enforce it. Validate the rendered selectors and test enforcement in a non-production cluster before relying on the policy.
-
-### External Secrets Operator
-
-STAGE and PROD show synthetic ExternalSecret references. They do not contain secret values or real secret-manager paths. The generated Secret is consumed by the Deployment as environment variables.
-
-Before enabling this feature in a real environment, an administrator must install the operator and CRDs, configure a namespaced SecretStore or ClusterSecretStore, and grant least-privilege access to the necessary external secret paths. Store scope and remote provider permissions determine the real secret access boundary. Missing operator, CRD, store, permissions, or remote keys prevents synchronization.
-
-### Values schema
-
-`values.schema.json` is a JSON Schema consumed by Helm during lint and template operations. It checks types and bounds for common settings such as image repository, ports, replicas, HPA ranges, CPU target, PDB values, network selectors, and ExternalSecret data. The helper templates handle cross-field checks that are clearer at render time, including HPA minimum/maximum and PDB availability versus the scale floor.
-
-## DEV, STAGE, and PROD examples
-
-All environments use the same chart. The values files override only environment-specific settings:
-
-| Environment | Replicas / HPA | PDB | Resource requests | ExternalSecret |
-| --- | --- | --- | --- | --- |
-| DEV | 1 / disabled | disabled | 50m CPU, 64Mi memory | disabled |
-| STAGE | 2–4 / CPU target 70% | minAvailable 1 | 200m CPU, 256Mi memory | enabled with synthetic key |
-| PROD | 3–6 / CPU target 65% | minAvailable 2 | 500m CPU, 512Mi memory | enabled with synthetic key |
-
-STAGE and PROD include `198.51.100.25/32`, a documentation-only address, as an example allowed egress destination. Replace it with a real, narrowly scoped dependency CIDR only after reviewing the network design.
-
-## Local validation
-
-From this project directory, run:
-
-```bash
-helm lint charts/twelve-factor-app
-helm template demo-dev charts/twelve-factor-app -n app-dev -f environments/dev-values.yaml
-helm template demo-stage charts/twelve-factor-app -n app-stage -f environments/stage-values.yaml
-helm template demo-prod charts/twelve-factor-app -n app-prod -f environments/prod-values.yaml
-bash scripts/validate.sh
+```json
+{
+  "DB_USERNAME": "example-user",
+  "DB_PASSWORD": "example-password"
+}
 ```
 
-The script lints the chart, renders all three environments, checks that optional resources appear only in the intended environments, confirms the HPA-enabled Deployment omits a fixed replica count, and verifies Helm rejects an invalid image repository and invalid HPA bounds. These commands only render YAML locally. They do not install or upgrade a release.
+The values above are examples only. Binary secrets, nested values, numbers, booleans, empty objects, and invalid Secret data keys are rejected.
+
+The controller does not accept access keys from ConfigMaps or environment variables in its code. Boto3 uses its standard credential chain. For a real EKS deployment, associate a narrowly scoped IAM role through EKS Pod Identity or IRSA. Restrict `secretsmanager:GetSecretValue` to the approved secret ARN and add `kms:Decrypt` only when the secret uses a customer-managed KMS key and the role needs that permission.
+
+Example least-privilege policy shape; replace the placeholder with the approved ARN before a real deployment:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["secretsmanager:GetSecretValue"],
+      "Resource": "REPLACE_WITH_APPROVED_SECRET_ARN"
+    }
+  ]
+}
+```
+
+The region is configured with `AWS_REGION` (or `AWS_DEFAULT_REGION`). The deployment manifest contains a placeholder region that must be replaced for a real deployment.
+
+## Kubernetes Secret ownership and reconciliation
+
+New Secrets use type `Opaque`, the ConfigMap namespace, and ownership annotations identifying this controller and the source ConfigMap. On future events, the controller modifies only a Secret with both matching ownership annotations. Existing unmanaged Secrets, or Secrets owned by a different ConfigMap, are left untouched and reported as an error.
+
+Kubernetes Secrets are not inherently encrypted because their values are base64 encoded. Enable Kubernetes encryption at rest, tightly restrict Secret reads, protect audit logs, and use an approved secret delivery design for the cluster.
+
+## Local installation and offline tests
+
+From this project directory:
+
+```bash
+python -m pip install -r requirements.txt
+ruff check .
+pytest -v
+```
+
+The test suite injects fake Boto3 and Kubernetes clients. It does not authenticate, connect to AWS, contact a cluster, retrieve real secrets, or create Kubernetes resources. Installing Python packages may require access to your configured package index; test execution itself makes no external service calls.
+
+The CI workflow also parses all project YAML files and its own workflow with PyYAML.
+
+## Deployment prerequisites
+
+The files in `deploy/` are examples only and are not applied by this lab. Before any real deployment:
+
+- Create the target namespace through the platform's approved process; these manifests use `demo`.
+- Build and publish the controller image separately, then replace the placeholder image.
+- Configure EKS Pod Identity or IRSA for the workload and scope AWS permissions to approved secret ARNs.
+- Review the Role and RoleBinding. They are namespace-scoped; ConfigMap patch permission lets Kopf persist handler progress annotations, Secret permissions are limited to get/create/patch, and event creation supports Kopf's Kubernetes event reporting.
+- Verify encryption at rest and restrict which principals can read Secrets.
+
+The controller is configured for one namespace and one replica using Kopf standalone mode. No cluster-wide RBAC or public Service/Ingress is included. This README explains deployment prerequisites but does not provide or run deployment commands.
 
 ## GitHub Actions CI
 
-The repository's shared workflow in `../.github/workflows/ci.yml` runs on pull requests and pushes to `main` when this project or the workflow changes. Its Problem 11 job checks out the repository, installs a pinned Helm version, runs `helm lint`, renders each environment, and runs the local validation script. Permissions are limited to `contents: read`. CI does not authenticate to Kubernetes or a cloud provider and does not deploy.
+The monorepo keeps a single workflow in the root `.github/workflows/` directory. Its Problem 12 job runs on pull requests and pushes to `main` when this project or the workflow changes. CI installs Python 3.11 dependencies, runs Ruff, runs the offline pytest suite, and parses YAML. Permissions are `contents: read`; CI does not authenticate to AWS or Kubernetes, build an image, or deploy.
 
 ## Security considerations
 
-- Keep credentials and secret values out of chart values, ConfigMaps, source control, and rendered artifacts.
-- Use External Secrets Operator references or pre-existing Kubernetes Secrets; scope store permissions to the required remote paths.
-- Use Kubernetes RBAC with least privilege and protect production values changes with review.
-- Use image tags that identify a reviewed release; for production, consider pinning by digest and maintain a controlled update process.
-- Run compatible non-root images. The default pod uses UID/GID 101, a read-only root filesystem, dropped Linux capabilities, no privilege escalation, and RuntimeDefault seccomp. Images must support these settings and writable temporary paths.
-- Set realistic resource requests and limits and make probes reflect application readiness and liveness.
-- Restrict ingress and egress intentionally. Validate namespace labels, DNS labels, and CNI enforcement in the target cluster.
-- Helm values and templates do not replace cluster policy, admission controls, image scanning, secret-store IAM, network segmentation, or runtime monitoring.
+- Treat AWS Secrets Manager as the source of truth. ConfigMaps carry references only.
+- Use EKS Pod Identity or IRSA for real AWS access; do not configure long-lived keys in the image or manifests.
+- Scope IAM to approved Secrets Manager ARNs and scope Kubernetes RBAC to the controller namespace.
+- Enable encryption at rest for Kubernetes Secrets and tightly limit read permissions.
+- The controller never logs AWS payloads, Secret data, or exception response bodies.
+- Ownership checks prevent overwriting Secrets that this ConfigMap did not create.
+- The pod uses a dedicated ServiceAccount, non-root UID, read-only root filesystem, dropped capabilities, no privilege escalation, and RuntimeDefault seccomp.
+- Protect production ConfigMap annotations and deployment changes with review and audit controls.
+- Secret synchronization does not replace cluster admission controls, network security, workload identity policy, monitoring, or incident response.
 
-## Idempotency and operations
+## Idempotency and rotation behavior
 
-Helm templates describe desired Kubernetes objects. Rendering the same chart version with the same values produces equivalent manifests, and Helm upgrades update the managed resources instead of intentionally creating duplicates. HPA adjusts replicas within its configured range, and External Secrets Operator reconciles the target Secret. NetworkPolicy and PDB are declarative resources.
+The same ConfigMap event and same AWS value result in no Kubernetes write when the owned Secret is already current. A changed AWS value is written only on a subsequent relevant ConfigMap create/update event. Kopf's progress annotations are ignored by the update filter, preventing self-triggered reconciliation loops.
 
-An upgrade can still change availability or access. Image, probe, resource, selector, PDB, secret mapping, and network changes need review. For production, use a protected deployment path, inspect rendered diffs, monitor rollouts, and keep a tested rollback plan. A PDB can also delay maintenance if configured too strictly.
-
-External Secrets Operator updates the Kubernetes Secret, but a process that consumes a Secret through environment variables does not see changed values until its pods restart. Plan rotation so the workload restarts safely, or use a reload-aware application and a mounted Secret volume pattern.
+This controller does **not** continuously detect AWS Secrets Manager rotations. Changing a secret in AWS alone does not generate a Kubernetes ConfigMap event. A later relevant ConfigMap event is required to reconcile it. Even after Kubernetes Secret data changes, an application reading the value through an environment variable will not see the new value until its pod restarts. Plan secret rotation and workload restart behavior accordingly.
 
 ## Limitations and future improvements
 
-This lab does not validate Kubernetes admission behavior against a live cluster, check that NetworkPolicy is enforced by a CNI, verify External Secrets Operator CRDs or remote provider permissions, scan images, or deploy the chart. The Nginx workload is a rendering example, not a complete 12-factor service. Network labels and DNS selectors may differ between clusters.
+- AWS Secrets Manager is the only provider; Azure Key Vault and other providers are out of scope.
+- Only JSON string payloads in `SecretString` are supported; binary and nested values are rejected.
+- The controller is namespace-scoped and runs as one standalone replica.
+- AWS rotations do not trigger reconciliation automatically.
+- ConfigMap deletion or opt-out does not delete the generated Secret.
+- The placeholder container image is not built or published, and no cluster deployment has been tested.
+- Kopf may add progress annotations to handled ConfigMaps, which is why its Role includes ConfigMap patch permission. Its Role also allows creating namespaced Kubernetes Events for handler reporting.
 
-Future work could add offline Kubernetes schema validation, chart packaging and provenance, image digest verification, and policy tests for organization-specific network and security requirements.
+Future work could add an explicit, separately reviewed rotation trigger, application rollout coordination, metrics, and tests against a disposable local Kubernetes cluster. Those capabilities are not part of this code-only lab.
 
-This project is code-only. No Kubernetes resources were deployed, no cloud resources were created, no secret manager was accessed, and nothing was pushed to GitHub.
+This project has not been deployed to a Kubernetes cluster, has not accessed AWS, and has not retrieved or created any real secrets.
 
