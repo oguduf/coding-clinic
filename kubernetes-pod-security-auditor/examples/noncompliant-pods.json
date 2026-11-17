@@ -1,0 +1,67 @@
+{
+  "apiVersion": "v1",
+  "kind": "PodList",
+  "items": [
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "api-pod",
+        "namespace": "production"
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "api",
+            "image": "example.invalid/api:1.0",
+            "securityContext": {
+              "privileged": true
+            },
+            "resources": {
+              "limits": {
+                "memory": "256Mi"
+              }
+            },
+            "env": [
+              {
+                "name": "API_TOKEN",
+                "value": "SYNTHETIC-NEVER-REPORT-THIS"
+              }
+            ]
+          }
+        ],
+        "volumes": [
+          {
+            "name": "host-data",
+            "hostPath": {
+              "path": "/var/lib/example"
+            }
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pending-worker",
+        "namespace": "development"
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "worker",
+            "image": "example.invalid/worker:1.0"
+          }
+        ]
+      },
+      "status": {
+        "phase": "Pending"
+      }
+    }
+  ]
+}
+
