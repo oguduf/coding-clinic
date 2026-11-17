@@ -1,190 +1,167 @@
-# Python Kubernetes Secret Sync Controller
+# Kubernetes Pod Security and Compliance Auditor
 
-This code-only lab implements a small Kopf controller that watches annotated ConfigMaps, reads a JSON string secret from AWS Secrets Manager, and creates or updates an owned Kubernetes Secret in the same namespace. It uses Boto3's standard AWS credential chain and the Kubernetes Python client.
+A read-only Python tool that audits Kubernetes PodList JSON for privileged containers, hostPath volumes, and missing CPU or memory limits. It supports offline fixtures by default and optional live read-only discovery through kubectl only when the operator explicitly passes `--live`.
 
-The project has not been deployed. Tests use mocked AWS and Kubernetes clients; no real credentials or secret values are used.
+This Code Clinic lab uses synthetic pod data. No cluster was accessed and no workload was modified.
 
 ## Original Code Clinic problem
 
-> Develop a Python Kubernetes operator (or controller) that watches for ConfigMaps with a specific annotation and automatically creates corresponding Kubernetes Secrets from AWS Secrets Manager / Azure Key Vault.
+> Create a Bash/Python script that audits all running pods in a cluster for privileged containers, hostPath mounts, and missing resource limits, outputting a compliance report.
 
-This implementation uses AWS Secrets Manager as the initial provider and does not include Azure Key Vault.
+## Enterprise business problem
 
-## Enterprise business scenario
+Clusters can accumulate workloads with broad host access, elevated container privileges, or missing resource limits. These settings can increase node-level risk, resource contention, and operational unpredictability. Platform teams need a repeatable report that identifies the relevant Pod specifications without changing them.
 
-Applications often consume credentials from Kubernetes Secrets while the organization treats AWS Secrets Manager as the source of truth. Manually copying secret values creates drift and exposes values to extra operators. This controller automates the transfer for explicitly opted-in ConfigMaps, checks ownership before modifying a Secret, and skips writes when the current values match.
+The tool is intentionally read-only. It does not remediate findings, create Kubernetes resources, or inspect workload templates.
 
 ## Architecture
 
 ```mermaid
-flowchart LR
-  CM[Annotated ConfigMap] -->|Kopf create/update event| Controller[Python controller]
-  Controller -->|GetSecretValue, standard AWS identity| AWS[AWS Secrets Manager]
-  AWS -->|SecretString JSON| Controller
-  Controller -->|get/create/patch in same namespace| K8sSecret[Kubernetes Secret]
-  K8sSecret --> App[Application workload]
-  RBAC[Namespace-scoped Role and RoleBinding] --> Controller
-  IAM[EKS Pod Identity or IRSA role] --> AWS
+flowchart TD
+  Fixture[Offline PodList JSON] -->|default mode| Auditor[Python auditor]
+  Cluster[Future Kubernetes API access] -->|explicit --live| Kubectl[kubectl get pods -A -o json]
+  Kubectl --> Auditor
+  Config[JSON rule configuration] --> Auditor
+  Auditor --> Rules[Privileged, hostPath, CPU/memory limits]
+  Rules --> Summary[Terminal summary]
+  Rules --> Report[Optional JSON report]
+  Summary --> Result[Pass/fail exit code]
+  Report --> Result
 ```
 
-The ConfigMap contains only an AWS secret reference and the target Kubernetes Secret name. Secret values do not pass through ConfigMap data.
+Live mode only invokes `kubectl get pods --all-namespaces -o json`. No shell is used, and the script has no write operations.
 
 ## Repository structure
 
 ```text
-k8s-secret-sync-controller/
-├── controller.py
-├── requirements.txt
-├── examples/configmap.yaml
-├── deploy/
-│   ├── deployment.yaml
-│   ├── serviceaccount.yaml
-│   └── rbac.yaml
-├── tests/test_controller.py
+coding-clinic/
 ├── README.md
-├── LICENSE
-└── .gitignore
+├── .github/workflows/ci.yml
+└── kubernetes-pod-security-auditor/
+    ├── auditor.py
+    ├── config.json
+    ├── examples/
+    │   ├── compliant-pods.json
+    │   └── noncompliant-pods.json
+    ├── tests/test_auditor.py
+    ├── LICENSE
+    └── .gitignore
 ```
 
-CI is kept in the repository's single root workflow folder at `../.github/workflows/ci.yml`.
+The monorepo keeps CI in the single root workflow folder at [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
-## Prerequisites
+## Prerequisites and installation
 
 - Python 3.11 or newer.
-- pip for installing the project dependencies.
-- AWS credentials and a Kubernetes cluster are **not** needed for tests.
-- A real deployment would require a pre-created target namespace, an image built and published separately, AWS workload identity, and the RBAC manifests reviewed for that namespace.
+- `kubectl` is needed only for future live mode.
+- Offline JSON mode and tests use only Python's standard library. No AWS credentials, kubeconfig, Kubernetes Python SDK, or cluster access is needed.
 
-## How the controller works
-
-Kopf registers create and update handlers for core-v1 ConfigMaps. An event is ignored unless `secret-sync.example.com/enabled` is set to `"true"`. For updates, the handler only reconciles when one of its three synchronization annotations changes; this prevents unrelated ConfigMap edits and Kopf's own progress annotations from triggering another AWS lookup.
-
-For an opted-in ConfigMap, the controller:
-
-1. Validates the AWS secret reference and target Secret name.
-2. Reads the target Secret in the ConfigMap's namespace.
-3. Refuses to continue if an existing Secret lacks the controller and source-ConfigMap ownership annotations.
-4. Calls AWS Secrets Manager `GetSecretValue` using Boto3's standard credential provider chain.
-5. Validates that `SecretString` is a non-empty JSON object whose keys are valid Secret data keys and whose values are strings.
-6. Creates the Secret if it does not exist, updates it if decoded data differs, or skips the write when it is unchanged.
-
-The Kubernetes API receives values through the Secret `stringData` field. The API stores the Secret's data encoded for transport; base64 encoding is not encryption. The controller decodes the existing `data` only in memory to compare it with the AWS value.
-
-Invalid annotations, invalid payloads, missing AWS secrets, access denied errors, and unmanaged Secrets are reported as permanent configuration/security errors. AWS connectivity and retryable Kubernetes API errors use Kopf temporary errors with retry. Error messages and logs do not contain secret values.
-
-Deleting or disabling a ConfigMap does not delete the Kubernetes Secret.
-
-## ConfigMap annotations
-
-The required annotations are:
-
-| Annotation | Purpose |
-| --- | --- |
-| `secret-sync.example.com/enabled` | Must be `"true"` to opt in |
-| `secret-sync.example.com/aws-secret-name` | AWS Secrets Manager secret name or ARN |
-| `secret-sync.example.com/target-secret-name` | Secret name to create or update in the same namespace |
-
-See [examples/configmap.yaml](examples/configmap.yaml). Its identifiers and non-sensitive data are synthetic. Do not put passwords, tokens, or secret values in ConfigMap annotations or data.
-
-The target name must be a valid Kubernetes DNS subdomain. The controller requires the ConfigMap to have a name and namespace.
-
-## AWS Secrets Manager integration
-
-This first version supports only `SecretString` containing a JSON object of string values, for example:
-
-```json
-{
-  "DB_USERNAME": "example-user",
-  "DB_PASSWORD": "example-password"
-}
-```
-
-The values above are examples only. Binary secrets, nested values, numbers, booleans, empty objects, and invalid Secret data keys are rejected.
-
-The controller does not accept access keys from ConfigMaps or environment variables in its code. Boto3 uses its standard credential chain. For a real EKS deployment, associate a narrowly scoped IAM role through EKS Pod Identity or IRSA. Restrict `secretsmanager:GetSecretValue` to the approved secret ARN and add `kms:Decrypt` only when the secret uses a customer-managed KMS key and the role needs that permission.
-
-Example least-privilege policy shape; replace the placeholder with the approved ARN before a real deployment:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": ["secretsmanager:GetSecretValue"],
-      "Resource": "REPLACE_WITH_APPROVED_SECRET_ARN"
-    }
-  ]
-}
-```
-
-The region is configured with `AWS_REGION` (or `AWS_DEFAULT_REGION`). The deployment manifest contains a placeholder region that must be replaced for a real deployment.
-
-## Kubernetes Secret ownership and reconciliation
-
-New Secrets use type `Opaque`, the ConfigMap namespace, and ownership annotations identifying this controller and the source ConfigMap. On future events, the controller modifies only a Secret with both matching ownership annotations. Existing unmanaged Secrets, or Secrets owned by a different ConfigMap, are left untouched and reported as an error.
-
-Kubernetes Secrets are not inherently encrypted because their values are base64 encoded. Enable Kubernetes encryption at rest, tightly restrict Secret reads, protect audit logs, and use an approved secret delivery design for the cluster.
-
-## Local installation and offline tests
-
-From this project directory:
+From the repository root, change into the project folder, then run:
 
 ```bash
-python -m pip install -r requirements.txt
-ruff check .
-pytest -v
+cd kubernetes-pod-security-auditor
+python auditor.py --input examples/compliant-pods.json --config config.json
+python -m unittest discover -s tests -v
 ```
 
-The test suite injects fake Boto3 and Kubernetes clients. It does not authenticate, connect to AWS, contact a cluster, retrieve real secrets, or create Kubernetes resources. Installing Python packages may require access to your configured package index; test execution itself makes no external service calls.
+The same standard-library-only program works without installing Python packages.
 
-The CI workflow also parses all project YAML files and its own workflow with PyYAML.
+## Configuration
 
-## Deployment prerequisites
+The checked-in `config.json` enables all three rules and fails the command when violations are present:
 
-The files in `deploy/` are examples only and are not applied by this lab. Before any real deployment:
+```json
+{
+  "check_privileged": true,
+  "check_hostpath": true,
+  "check_resource_limits": true,
+  "fail_on_violations": true
+}
+```
 
-- Create the target namespace through the platform's approved process; these manifests use `demo`.
-- Build and publish the controller image separately, then replace the placeholder image.
-- Configure EKS Pod Identity or IRSA for the workload and scope AWS permissions to approved secret ARNs.
-- Review the Role and RoleBinding. They are namespace-scoped; ConfigMap patch permission lets Kopf persist handler progress annotations, Secret permissions are limited to get/create/patch, and event creation supports Kopf's Kubernetes event reporting.
-- Verify encryption at rest and restrict which principals can read Secrets.
+All four keys are required and must be JSON booleans. Unknown keys and invalid types return exit code 2. Set a rule to `false` to disable only that check. When `fail_on_violations` is false, the report still says `FAIL` if findings exist, while the process returns 0 so the report can be collected without blocking a pipeline.
 
-The controller is configured for one namespace and one replica using Kopf standalone mode. No cluster-wide RBAC or public Service/Ingress is included. This README explains deployment prerequisites but does not provide or run deployment commands.
+## What the auditor checks
+
+Only pods whose `status.phase` is exactly `Running` are audited. Other phases, including Pending, Succeeded, Failed, and Unknown, are counted as skipped. Pod phase does not guarantee every container is currently running; this lab uses phase as the requested selection rule.
+
+For each running Pod, the auditor:
+
+- Checks regular and init containers for `securityContext.privileged: true`. A missing or false value is not treated as privileged.
+- Checks pod-level volumes for any non-null `hostPath`. ConfigMap, Secret, and emptyDir volumes are not flagged. A printable absolute host path of up to 256 characters is included in the report; unusual or unsafe paths are omitted.
+- Checks regular and init containers for both `resources.limits.cpu` and `resources.limits.memory`. Requests do not count as limits.
+- Checks ephemeral containers for privileged mode, but does not require resource limits for them.
+
+A Pod with several findings is counted once as noncompliant, with each distinct rule finding in the violation list. The report includes namespace, pod, rule, description, and container or volume details where relevant. Pod environment variables and their values are never copied into reports.
+
+Kubernetes LimitRange admission defaults can affect the effective Pod spec returned by the API. This simple tool checks the current Pod specification, not whether a workload template explicitly declared a limit or whether a default is appropriate.
+
+## Offline usage and reports
+
+Audit a compliant fixture:
+
+```bash
+cd kubernetes-pod-security-auditor
+python auditor.py --input examples/compliant-pods.json --config config.json
+```
+
+Audit the noncompliant fixture and write JSON:
+
+```bash
+python auditor.py \
+  --input examples/noncompliant-pods.json \
+  --config config.json \
+  --output report.json
+```
+
+The JSON report contains summary counts, overall result, and structured violations. Only the explicitly requested report file is created. The terminal report is also printed.
+
+Exit codes:
+
+| Code | Meaning |
+| ---: | --- |
+| 0 | Audit completed with no blocking findings, or findings are non-blocking by configuration |
+| 1 | Audit completed and blocking violations were found |
+| 2 | Invalid JSON/configuration/input or audit execution failed |
+
+The noncompliant example intentionally returns 1 with the default configuration.
+
+## Future live cluster usage
+
+Live discovery requires explicit opt-in:
+
+```bash
+python auditor.py --live --config config.json
+```
+
+This command is documented for future use only and was **not run** during this lab. Before use, arrange a kubeconfig and identity with read-only permission to list Pods across the intended namespaces. A cluster-wide `kubectl get pods --all-namespaces` generally requires appropriately scoped list access across namespaces. Do not grant write permissions for this auditor. Protect kubeconfig files like credentials and avoid placing them in the repository.
+
+The tool uses a fixed argument list with `subprocess.run(..., shell=False)`, a timeout, and no command output in errors. It does not fall back to live mode if an offline file is missing.
 
 ## GitHub Actions CI
 
-The monorepo keeps a single workflow in the root `.github/workflows/` directory. Its Problem 12 job runs on pull requests and pushes to `main` when this project or the workflow changes. CI installs Python 3.11 dependencies, runs Ruff, runs the offline pytest suite, and parses YAML. Permissions are `contents: read`; CI does not authenticate to AWS or Kubernetes, build an image, or deploy.
+The single root workflow at `.github/workflows/ci.yml` runs on pull requests and pushes to `main`. It checks Python syntax, runs the standard-library unittest suite, audits the compliant fixture, verifies that the noncompliant fixture exits with code 1, and parses the JSON configuration and fixtures. Permissions are limited to `contents: read`.
+
+CI does not connect to Kubernetes or a cloud provider, modify resources, or deploy applications.
 
 ## Security considerations
 
-- Treat AWS Secrets Manager as the source of truth. ConfigMaps carry references only.
-- Use EKS Pod Identity or IRSA for real AWS access; do not configure long-lived keys in the image or manifests.
-- Scope IAM to approved Secrets Manager ARNs and scope Kubernetes RBAC to the controller namespace.
-- Enable encryption at rest for Kubernetes Secrets and tightly limit read permissions.
-- The controller never logs AWS payloads, Secret data, or exception response bodies.
-- Ownership checks prevent overwriting Secrets that this ConfigMap did not create.
-- The pod uses a dedicated ServiceAccount, non-root UID, read-only root filesystem, dropped capabilities, no privilege escalation, and RuntimeDefault seccomp.
-- Protect production ConfigMap annotations and deployment changes with review and audit controls.
-- Secret synchronization does not replace cluster admission controls, network security, workload identity policy, monitoring, or incident response.
+- Use offline fixtures for development and review.
+- Live access is explicit and read-only; use least-privilege Pod list access only.
+- The auditor does not need cloud credentials or Kubernetes write permissions.
+- Reports contain workload identifiers and findings, not environment variables or secret values. Treat reports as operational metadata and store them according to organizational policy.
+- hostPath paths can reveal host filesystem layout. The report includes only printable absolute paths under the configured length limit.
+- Privileged containers and hostPath mounts may be necessary for trusted system workloads. Review findings in context, but do not automatically whitelist every system namespace.
+- The script does not remediate violations or create an allowlist.
+- Protect kubeconfig files and never commit them.
 
-## Idempotency and rotation behavior
+## Idempotency and limitations
 
-The same ConfigMap event and same AWS value result in no Kubernetes write when the owned Secret is already current. A changed AWS value is written only on a subsequent relevant ConfigMap create/update event. Kopf's progress annotations are ignored by the update filter, preventing self-triggered reconciliation loops.
+The auditor is read-only. Repeated runs with identical input and configuration produce the same findings and counts. It does not modify Pods, Deployments, Namespaces, RBAC, Secrets, or cluster configuration; it creates a report file only when `--output` is specified.
 
-This controller does **not** continuously detect AWS Secrets Manager rotations. Changing a secret in AWS alone does not generate a Kubernetes ConfigMap event. A later relevant ConfigMap event is required to reconcile it. Even after Kubernetes Secret data changes, an application reading the value through an environment variable will not see the new value until its pod restarts. Plan secret rotation and workload restart behavior accordingly.
+The tool is not a complete Kubernetes security or compliance framework. It checks current Pod specifications rather than Deployment, StatefulSet, DaemonSet, Job, or CronJob templates. It does not inspect image provenance, capabilities, seccomp profiles, service accounts, network policy, admission policy, or runtime behavior. A Running Pod can still contain waiting or terminated containers.
 
-## Limitations and future improvements
+Future improvements could add policy severity, workload-template auditing, structured formats for other reporting systems, and narrowly scoped organization-specific rules. Those are outside this simple lab.
 
-- AWS Secrets Manager is the only provider; Azure Key Vault and other providers are out of scope.
-- Only JSON string payloads in `SecretString` are supported; binary and nested values are rejected.
-- The controller is namespace-scoped and runs as one standalone replica.
-- AWS rotations do not trigger reconciliation automatically.
-- ConfigMap deletion or opt-out does not delete the generated Secret.
-- The placeholder container image is not built or published, and no cluster deployment has been tested.
-- Kopf may add progress annotations to handled ConfigMaps, which is why its Role includes ConfigMap patch permission. Its Role also allows creating namespaced Kubernetes Events for handler reporting.
-
-Future work could add an explicit, separately reviewed rotation trigger, application rollout coordination, metrics, and tests against a disposable local Kubernetes cluster. Those capabilities are not part of this code-only lab.
-
-This project has not been deployed to a Kubernetes cluster, has not accessed AWS, and has not retrieved or created any real secrets.
+This is a code-only project. No Kubernetes cluster was accessed, no workload or infrastructure was modified, and live mode was not run.
 
