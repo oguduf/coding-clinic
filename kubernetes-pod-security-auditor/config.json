@@ -1,7 +1,0 @@
-{
-  "check_privileged": true,
-  "check_hostpath": true,
-  "check_resource_limits": true,
-  "fail_on_violations": true
-}
-
