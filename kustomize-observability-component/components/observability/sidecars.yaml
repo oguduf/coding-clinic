@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: observability-sidecars
+spec:
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9102"
+        prometheus.io/path: /metrics
+    spec:
+      volumes:
+        - name: app-logs
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: fluent-bit-config
+          configMap:
+            name: fluent-bit-config
+      containers:
+        - name: application
+          volumeMounts:
+            - name: app-logs
+              mountPath: /var/log/app
+        - name: metrics-exporter
+          image: prom/statsd-exporter:v0.31.0
+          args:
+            - --web.listen-address=:9102
+            - --web.telemetry-path=/metrics
+            - --statsd.listen-udp=:9125
+            - --statsd.listen-tcp=
+          ports:
+            - name: metrics
+              containerPort: 9102
+              protocol: TCP
+            - name: statsd-udp
+              containerPort: 9125
+              protocol: UDP
+          resources:
+            requests:
+              cpu: 10m
+              memory: 24Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+        - name: fluent-bit
+          image: cr.fluentbit.io/fluent/fluent-bit:5.1.5
+          args: ["-c", "/fluent-bit/etc/fluent-bit.conf"]
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 2000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: app-logs
+              mountPath: /var/log/app
+              readOnly: true
+            - name: fluent-bit-config
+              mountPath: /fluent-bit/etc/fluent-bit.conf
+              subPath: fluent-bit.conf
+              readOnly: true
+
+
