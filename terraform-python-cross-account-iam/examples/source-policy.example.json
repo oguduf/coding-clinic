@@ -1,0 +1,13 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "AssumeApprovedTargetRoles",
+    "Effect": "Allow",
+    "Action": "sts:AssumeRole",
+    "Resource": [
+      "arn:aws:iam::444455556666:role/example-deployment-role",
+      "arn:aws:iam::555566667777:role/example-deployment-role",
+      "arn:aws:iam::666677778888:role/example-deployment-role"
+    ]
+  }]
+}
