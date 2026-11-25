@@ -1,0 +1,9 @@
+{
+  "mode": "offline-static-validation",
+  "environment": "dev",
+  "account_ids": {"source": "111122223333", "target": "444455556666"},
+  "external_id": "configured-via-environment-variable; value-redacted",
+  "aws_api_calls": 0,
+  "findings": [],
+  "limitations": ["Static checks are not full AWS IAM authorization evaluation."]
+}

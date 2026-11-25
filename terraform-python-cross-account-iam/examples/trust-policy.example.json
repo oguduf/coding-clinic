@@ -1,0 +1,10 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "TrustedPipelineWithExternalId",
+    "Effect": "Allow",
+    "Principal": {"AWS": "arn:aws:iam::111122223333:role/example-cicd-role"},
+    "Action": "sts:AssumeRole",
+    "Condition": {"StringEquals": {"sts:ExternalId": "${external_id_injected_at_deploy_time}"}}
+  }]
+}

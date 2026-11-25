@@ -1,0 +1,9 @@
+rules:
+  require_explicit_trusted_principal: true
+  require_external_id_condition: true
+  deny_wildcard_principal: true
+  deny_administrator_access: true
+  deny_unscoped_source_assume_role: true
+severity:
+  wildcard_principal: critical
+  broad_target_resource: high

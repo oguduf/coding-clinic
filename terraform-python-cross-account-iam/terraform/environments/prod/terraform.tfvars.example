@@ -1,0 +1,15 @@
+source_profile = "source"
+target_profile = "target-prod"
+aws_region = "us-east-1"
+source_account_id = "111122223333"
+target_account_id = "666677778888"
+source_role_name = "example-cicd-role"
+target_role_name = "prod-readonly-deployment-role"
+session_duration = 3600
+permissions_boundary_arn = "arn:aws:iam::666677778888:policy/ApprovedCICDPermissionsBoundary"
+policy_statements = [
+  { sid = "InspectArtifactMetadata", actions = ["s3:GetObject"], resources = ["arn:aws:s3:::example-artifacts-bucket/prod/*"] },
+  { sid = "ReadApprovedECRMetadata", actions = ["ecr:DescribeImages"], resources = ["arn:aws:ecr:us-east-1:666677778888:repository/approved-app"] }
+]
+tags = { Project = "cross-account-iam-lab", Environment = "prod", Approval = "manual-review-required" }
+

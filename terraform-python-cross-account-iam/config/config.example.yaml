@@ -1,0 +1,21 @@
+application:
+  name: terraform-python-cross-account-iam
+  environment: dev
+  log_level: INFO
+aws:
+  region: us-east-1
+cross_account:
+  source_account_id: "111122223333"
+  target_account_id: "444455556666"
+  source_role_name: example-cicd-role
+  target_role_name: example-deployment-role
+  external_id_env_var: AWS_CROSS_ACCOUNT_EXTERNAL_ID
+  session_duration: 3600
+security:
+  require_external_id: true
+  enforce_least_privilege: true
+  allow_wildcard_principal: false
+  allow_administrator_access: false
+validation:
+  offline_mode: true
+  output_format: json

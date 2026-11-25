@@ -1,0 +1,14 @@
+source_profile = "source"
+target_profile = "target-dev"
+aws_region = "us-east-1"
+source_account_id = "111122223333"
+target_account_id = "444455556666"
+source_role_name = "example-cicd-role"
+target_role_name = "dev-example-deployment-role"
+session_duration = 3600
+policy_statements = [
+  { sid = "ReadArtifactObjects", actions = ["s3:GetObject"], resources = ["arn:aws:s3:::example-artifacts-bucket/dev/*"] },
+  { sid = "ListArtifactBucket", actions = ["s3:ListBucket"], resources = ["arn:aws:s3:::example-artifacts-bucket"] }
+]
+tags = { Project = "cross-account-iam-lab", Environment = "dev" }
+
