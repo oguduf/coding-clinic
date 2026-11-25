@@ -1,0 +1,14 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "TrustApprovedOrganizationManagementPrincipal",
+    "Effect": "Allow",
+    "Principal": {"AWS": "arn:aws:iam::<MANAGEMENT_ACCOUNT_ID>:root"},
+    "Action": "sts:AssumeRole",
+    "Condition": {
+      "StringEquals": {"aws:PrincipalOrgID": "<ORGANIZATION_ID>"},
+      "ArnLike": {"aws:PrincipalArn": "arn:aws:iam::<MANAGEMENT_ACCOUNT_ID>:role/<APPROVED_INVENTORY_CALLER_ROLE>"}
+    }
+  }]
+}
+

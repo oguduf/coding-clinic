@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aws-ebs-cost-optimizer"
+version = "0.1.0"
+description = "Offline-first, read-only EBS cost discovery and cleanup planning for AWS Organizations"
+requires-python = ">=3.11"
+dependencies = ["boto3>=1.34,<2", "PyYAML>=6.0,<7"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "pytest-cov>=5,<8", "ruff>=0.8,<1", "bandit>=1.7,<2"]
+
+[project.scripts]
+ebs-optimizer = "ebs_optimizer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["S105", "S106"]
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+

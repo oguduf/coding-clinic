@@ -1,0 +1,6 @@
+[
+  {"Region":"us-east-1","VolumeId":"vol-sampledev001","AvailabilityZone":"us-east-1a","VolumeType":"gp3","Size":100,"CreateTime":"2025-12-17T12:00:00Z","State":"available","Encrypted":true,"Iops":6000,"Throughput":250,"Tags":[{"Key":"Environment","Value":"dev"}]},
+  {"Region":"us-west-2","VolumeId":"vol-samplestage001","AvailabilityZone":"us-west-2b","VolumeType":"gp2","Size":250,"CreateTime":"2025-11-02T12:00:00Z","State":"available","Encrypted":true,"Tags":[{"Key":"Application","Value":"sample-api"}]},
+  {"Region":"eu-west-1","VolumeId":"vol-sampleprod001","AvailabilityZone":"eu-west-1a","VolumeType":"io2","Size":500,"CreateTime":"2025-10-03T12:00:00Z","State":"available","Encrypted":true,"Iops":40000,"Tags":[{"Key":"Environment","Value":"prod"}]}
+]
+

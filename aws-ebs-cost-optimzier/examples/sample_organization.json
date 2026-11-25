@@ -1,0 +1,38 @@
+{
+  "reference_time": "2026-01-31T12:00:00Z",
+  "accounts": [
+    {
+      "account_id": "000000000101",
+      "name": "dev-account",
+      "status": "ACTIVE",
+      "environment": "dev",
+      "volumes": [
+        {"Region":"us-east-1","VolumeId":"vol-sampledev001","AvailabilityZone":"us-east-1a","VolumeType":"gp3","Size":100,"CreateTime":"2025-12-17T12:00:00Z","State":"available","Encrypted":true,"KmsKeyId":"alias/example-ebs","Iops":6000,"Throughput":250,"Tags":[{"Key":"Environment","Value":"dev"}]},
+        {"Region":"us-east-1","VolumeId":"vol-sampledev002","AvailabilityZone":"us-east-1b","VolumeType":"gp3","Size":50,"CreateTime":"2026-01-01T12:00:00Z","State":"available","Encrypted":true,"Iops":3000,"Throughput":125,"Tags":[{"Key":"DoNotDelete","Value":"true"}]},
+        {"Region":"ap-south-1","VolumeId":"vol-sampledev003","AvailabilityZone":"ap-south-1a","VolumeType":"sc1","Size":1000,"CreateTime":"2025-11-02T12:00:00Z","State":"available","Encrypted":false,"Tags":[]},
+        {"Region":"us-east-1","VolumeId":"vol-sampleattached","AvailabilityZone":"us-east-1a","VolumeType":"gp2","Size":80,"CreateTime":"2025-10-03T12:00:00Z","State":"in-use","Encrypted":true,"Attachments":[{"InstanceId":"i-synthetic","State":"attached"}],"Tags":[]}
+      ]
+    },
+    {
+      "account_id": "000000000202",
+      "name": "stage-account",
+      "status": "ACTIVE",
+      "environment": "stage",
+      "volumes": [
+        {"Region":"us-west-2","VolumeId":"vol-samplestage001","AvailabilityZone":"us-west-2b","VolumeType":"gp2","Size":250,"CreateTime":"2025-11-02T12:00:00Z","State":"available","Encrypted":true,"Tags":[{"Key":"Application","Value":"sample-api"}]},
+        {"Region":"us-west-2","VolumeId":"vol-samplestage002","AvailabilityZone":"us-west-2a","VolumeType":"io1","Size":40,"CreateTime":"2025-10-03T12:00:00Z","State":"available","Encrypted":true,"Iops":1000,"Tags":[]}
+      ]
+    },
+    {
+      "account_id": "000000000303",
+      "name": "prod-account",
+      "status": "ACTIVE",
+      "environment": "prod",
+      "volumes": [
+        {"Region":"eu-west-1","VolumeId":"vol-sampleprod001","AvailabilityZone":"eu-west-1a","VolumeType":"io2","Size":500,"CreateTime":"2025-10-03T12:00:00Z","State":"available","Encrypted":true,"KmsKeyId":"alias/example-prod","Iops":40000,"Tags":[{"Key":"Environment","Value":"prod"}]}
+      ]
+    },
+    {"account_id":"000000000404","name":"suspended-example","status":"SUSPENDED","environment":"dev","volumes":[]}
+  ]
+}
+
