@@ -1,0 +1,42 @@
+name: Validation only
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: "3.12"
+      - name: Install offline test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck shfmt bats
+          python -m pip install --disable-pip-version-check 'pytest>=8,<9' 'PyYAML>=6,<7' 'yamllint>=1.35,<2'
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+      - name: Python and workflow tests
+        run: |
+          python -m pytest -q
+          bash scripts/validate-config.sh config/pipeline.example.yaml
+      - name: Shell validation
+        run: |
+          shellcheck scripts/*.sh
+          shfmt -d scripts/*.sh
+          bats tests/*.bats
+      - name: GitHub Actions workflow validation
+        run: |
+          yamllint -d relaxed .github/workflows config
+          "$(go env GOPATH)/bin/actionlint" -color
+      - name: Dockerfile validation
+        run: docker run --rm -i hadolint/hadolint:v2.12.0 < Dockerfile
+      - name: Dockerfile safety contract
+        run: python -c "from pathlib import Path; d=Path('Dockerfile').read_text(); assert 'USER 10001:10001' in d and 'FROM python:3.12-slim-bookworm' in d"

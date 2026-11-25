@@ -1,0 +1,6 @@
+provider: azure
+enabled: false
+tenant_id: "00000000-0000-4000-8000-000000000000" # synthetic placeholder
+subscription_id: "00000000-0000-4000-8000-000000000000" # synthetic placeholder
+registry: example.invalid
+repository: example-app

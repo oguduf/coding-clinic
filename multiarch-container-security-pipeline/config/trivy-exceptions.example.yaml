@@ -1,0 +1,12 @@
+# Exception ledger example; documentation only, not passed directly to Trivy.
+# Keep empty unless each item has review evidence, an owner, and an expiry.
+exceptions: []
+# Example reviewed exception (keep commented until approved):
+# exceptions:
+#   - id: CVE-2099-1234
+#     severity: HIGH
+#     package: example-package
+#     reason: "False positive for this package usage; evidence linked in ticket."
+#     ticket: SEC-1234
+#     owner: platform-security
+#     expires: 2099-12-31

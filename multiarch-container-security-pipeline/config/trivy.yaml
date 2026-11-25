@@ -1,0 +1,10 @@
+severity:
+  - HIGH
+  - CRITICAL
+ignore-unfixed: false
+exit-code: 1
+format: json
+scanners:
+  - vuln
+vulnerability:
+  ignore-unfixed: false

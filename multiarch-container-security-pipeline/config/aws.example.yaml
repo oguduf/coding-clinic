@@ -1,0 +1,6 @@
+provider: aws
+enabled: false
+region: us-east-1
+account_id: "111122223333" # synthetic documentation value only
+repository: example-app
+oidc_role_arn: arn:aws:iam::111122223333:role/example-github-publisher

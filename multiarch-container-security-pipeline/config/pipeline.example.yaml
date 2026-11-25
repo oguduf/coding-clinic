@@ -1,0 +1,20 @@
+application:
+  name: sample-container-app
+image:
+  platforms: [linux/amd64, linux/arm64]
+  tags: [sha-<40-character-commit-sha>]
+security:
+  scan_tool: trivy
+  trivy_version: "0.76.1"
+  severity: [HIGH, CRITICAL]
+  fail_on_findings: true
+  ignore_file: config/trivy-exceptions.example.yaml
+  signing_tool: cosign
+publishing:
+  enabled: false
+  protected_branches: [main, "release/*"]
+  github_environment: production-publish
+registries:
+  aws: {enabled: false, region: us-east-1, repository: example-app}
+  azure: {enabled: false, registry: example.invalid, repository: example-app}
+  gcp: {enabled: false, location: us-central1, repository: example-app}

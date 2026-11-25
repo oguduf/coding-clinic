@@ -1,0 +1,7 @@
+provider: gcp
+enabled: false
+project_id: example-project
+location: us-central1
+repository: example-app
+workload_identity_provider: projects/000000000000/locations/global/workloadIdentityPools/example/providers/github
+service_account: github-publisher@example-project.iam.gserviceaccount.com
