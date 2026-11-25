@@ -1,0 +1,35 @@
+application:
+  name: aws-ebs-cost-optimizer
+  environment: dev
+  log_level: INFO
+aws:
+  role_name: EBSInventoryReadOnlyRole
+  regions:
+    - us-east-1
+    - us-west-2
+    - eu-west-1
+  included_accounts: []
+  excluded_accounts: []
+discovery:
+  minimum_age_days: 30
+  volume_states:
+    - available
+reporting:
+  formats:
+    - csv
+    - json
+    - markdown
+  output_directory: reports
+deletion_plan:
+  enabled: false
+  require_manual_approval: true
+  exclude_production: true
+  protected_tags:
+    DoNotDelete: "true"
+    Retention: required
+pricing:
+  source: illustrative-version-controlled-fixture
+  fixture_path: config/pricing.example.json
+  currency: USD
+  effective_date: "2026-01-01"
+

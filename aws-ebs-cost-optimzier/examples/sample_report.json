@@ -1,0 +1,250 @@
+{
+  "by_account": {
+    "000000000101 (dev-account)": {
+      "monthly_cost_usd": "28.00",
+      "storage_gib": 1150,
+      "volume_count": 3
+    },
+    "000000000202 (stage-account)": {
+      "monthly_cost_usd": "97.90",
+      "storage_gib": 290,
+      "volume_count": 2
+    },
+    "000000000303 (prod-account)": {
+      "monthly_cost_usd": "0.00",
+      "storage_gib": 500,
+      "volume_count": 1
+    }
+  },
+  "by_region": {
+    "ap-south-1": {
+      "monthly_cost_usd": "0.00",
+      "storage_gib": 1000,
+      "volume_count": 1
+    },
+    "eu-west-1": {
+      "monthly_cost_usd": "0.00",
+      "storage_gib": 500,
+      "volume_count": 1
+    },
+    "us-east-1": {
+      "monthly_cost_usd": "28.00",
+      "storage_gib": 150,
+      "volume_count": 2
+    },
+    "us-west-2": {
+      "monthly_cost_usd": "97.90",
+      "storage_gib": 290,
+      "volume_count": 2
+    }
+  },
+  "by_volume_type": {
+    "gp2": {
+      "monthly_cost_usd": "27.50",
+      "storage_gib": 250,
+      "volume_count": 1
+    },
+    "gp3": {
+      "monthly_cost_usd": "28.00",
+      "storage_gib": 150,
+      "volume_count": 2
+    },
+    "io1": {
+      "monthly_cost_usd": "70.40",
+      "storage_gib": 40,
+      "volume_count": 1
+    },
+    "io2": {
+      "monthly_cost_usd": "0.00",
+      "storage_gib": 500,
+      "volume_count": 1
+    },
+    "sc1": {
+      "monthly_cost_usd": "0.00",
+      "storage_gib": 1000,
+      "volume_count": 1
+    }
+  },
+  "coverage": {
+    "accounts_discovered": 4,
+    "accounts_failed": 0,
+    "accounts_scanned": 3,
+    "candidate_storage_gib": 390,
+    "complete": true,
+    "cost_is_run_rate_estimate": true,
+    "estimated_annualized_candidate_cost_usd": "1510.80",
+    "estimated_monthly_candidate_cost_usd": "125.90",
+    "regions_scanned": [
+      "ap-south-1",
+      "eu-west-1",
+      "us-east-1",
+      "us-west-2"
+    ],
+    "review_candidates": 3,
+    "unattached_volumes_found": 6,
+    "unattached_volumes_meeting_age_threshold": 6,
+    "volumes_inspected": 7
+  },
+  "errors": [],
+  "execution_mode": "offline-fixture",
+  "volumes": [
+    {
+      "account_id": "000000000101",
+      "account_name": "dev-account",
+      "age_days": 90,
+      "availability_zone": "ap-south-1a",
+      "create_time": "2025-11-02T12:00:00Z",
+      "eligible_for_review": false,
+      "encrypted": false,
+      "environment": "dev",
+      "exclusion_reason": "pricing is unavailable",
+      "iops": null,
+      "kms_key_id": null,
+      "meets_age_threshold": true,
+      "monthly_cost": null,
+      "pricing_effective_date": null,
+      "pricing_source": null,
+      "pricing_status": "unavailable",
+      "region": "ap-south-1",
+      "size_gib": 1000,
+      "state": "available",
+      "tags": {},
+      "throughput_mibps": null,
+      "volume_id": "vol-sampledev003",
+      "volume_type": "sc1"
+    },
+    {
+      "account_id": "000000000101",
+      "account_name": "dev-account",
+      "age_days": 45,
+      "availability_zone": "us-east-1a",
+      "create_time": "2025-12-17T12:00:00Z",
+      "eligible_for_review": true,
+      "encrypted": true,
+      "environment": "dev",
+      "exclusion_reason": null,
+      "iops": 6000,
+      "kms_key_id": "alias/example-ebs",
+      "meets_age_threshold": true,
+      "monthly_cost": "28.00",
+      "pricing_effective_date": "2026-01-01",
+      "pricing_source": "Illustrative synthetic fixture; not official AWS pricing",
+      "pricing_status": "available",
+      "region": "us-east-1",
+      "size_gib": 100,
+      "state": "available",
+      "tags": {
+        "Environment": "dev"
+      },
+      "throughput_mibps": 250,
+      "volume_id": "vol-sampledev001",
+      "volume_type": "gp3"
+    },
+    {
+      "account_id": "000000000101",
+      "account_name": "dev-account",
+      "age_days": 30,
+      "availability_zone": "us-east-1b",
+      "create_time": "2026-01-01T12:00:00Z",
+      "eligible_for_review": false,
+      "encrypted": true,
+      "environment": "dev",
+      "exclusion_reason": "protected tag DoNotDelete=true",
+      "iops": 3000,
+      "kms_key_id": null,
+      "meets_age_threshold": true,
+      "monthly_cost": "4.00",
+      "pricing_effective_date": "2026-01-01",
+      "pricing_source": "Illustrative synthetic fixture; not official AWS pricing",
+      "pricing_status": "available",
+      "region": "us-east-1",
+      "size_gib": 50,
+      "state": "available",
+      "tags": {
+        "DoNotDelete": "true"
+      },
+      "throughput_mibps": 125,
+      "volume_id": "vol-sampledev002",
+      "volume_type": "gp3"
+    },
+    {
+      "account_id": "000000000202",
+      "account_name": "stage-account",
+      "age_days": 90,
+      "availability_zone": "us-west-2b",
+      "create_time": "2025-11-02T12:00:00Z",
+      "eligible_for_review": true,
+      "encrypted": true,
+      "environment": "stage",
+      "exclusion_reason": null,
+      "iops": null,
+      "kms_key_id": null,
+      "meets_age_threshold": true,
+      "monthly_cost": "27.50",
+      "pricing_effective_date": "2026-01-01",
+      "pricing_source": "Illustrative synthetic fixture; not official AWS pricing",
+      "pricing_status": "available",
+      "region": "us-west-2",
+      "size_gib": 250,
+      "state": "available",
+      "tags": {
+        "Application": "sample-api"
+      },
+      "throughput_mibps": null,
+      "volume_id": "vol-samplestage001",
+      "volume_type": "gp2"
+    },
+    {
+      "account_id": "000000000202",
+      "account_name": "stage-account",
+      "age_days": 120,
+      "availability_zone": "us-west-2a",
+      "create_time": "2025-10-03T12:00:00Z",
+      "eligible_for_review": true,
+      "encrypted": true,
+      "environment": "stage",
+      "exclusion_reason": null,
+      "iops": 1000,
+      "kms_key_id": null,
+      "meets_age_threshold": true,
+      "monthly_cost": "70.40",
+      "pricing_effective_date": "2026-01-01",
+      "pricing_source": "Illustrative synthetic fixture; not official AWS pricing",
+      "pricing_status": "available",
+      "region": "us-west-2",
+      "size_gib": 40,
+      "state": "available",
+      "tags": {},
+      "throughput_mibps": null,
+      "volume_id": "vol-samplestage002",
+      "volume_type": "io1"
+    },
+    {
+      "account_id": "000000000303",
+      "account_name": "prod-account",
+      "age_days": 120,
+      "availability_zone": "eu-west-1a",
+      "create_time": "2025-10-03T12:00:00Z",
+      "eligible_for_review": false,
+      "encrypted": true,
+      "environment": "prod",
+      "exclusion_reason": "production environment is excluded by policy",
+      "iops": 40000,
+      "kms_key_id": "alias/example-prod",
+      "meets_age_threshold": true,
+      "monthly_cost": "2518.00",
+      "pricing_effective_date": "2026-01-01",
+      "pricing_source": "Illustrative synthetic fixture; not official AWS pricing",
+      "pricing_status": "available",
+      "region": "eu-west-1",
+      "size_gib": 500,
+      "state": "available",
+      "tags": {
+        "Environment": "prod"
+      },
+      "throughput_mibps": null,
+      "volume_id": "vol-sampleprod001",
+      "volume_type": "io2"
+    }
+  ]
+}

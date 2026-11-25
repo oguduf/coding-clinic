@@ -1,0 +1,36 @@
+{
+  "source": "Illustrative synthetic fixture; not official AWS pricing",
+  "effective_date": "2026-01-01",
+  "currency": "USD",
+  "billing_period": "per GiB-month / provisioned performance-month; 730-hour normalized month",
+  "regions": {
+    "us-east-1": {"volume_types": {
+      "gp2": {"storage_per_gib_month": "0.100"},
+      "gp3": {"storage_per_gib_month": "0.080", "included_iops": 3000, "iops_per_month": "0.005", "included_throughput_mibps": 125, "throughput_per_mibps_month": "0.040"},
+      "io1": {"storage_per_gib_month": "0.125", "included_iops": 0, "iops_per_month": "0.065"},
+      "io2": {"storage_per_gib_month": "0.125", "included_iops": 0, "iops_tiers": [{"up_to": 32000, "price_per_iops_month": "0.065"}, {"up_to": 32000, "price_per_iops_month": "0.046"}, {"up_to": null, "price_per_iops_month": "0.032"}]},
+      "st1": {"storage_per_gib_month": "0.045"},
+      "sc1": {"storage_per_gib_month": "0.015"},
+      "standard": {"storage_per_gib_month": "0.050"}
+    }},
+    "us-west-2": {"volume_types": {
+      "gp2": {"storage_per_gib_month": "0.110"},
+      "gp3": {"storage_per_gib_month": "0.090", "included_iops": 3000, "iops_per_month": "0.005", "included_throughput_mibps": 125, "throughput_per_mibps_month": "0.040"},
+      "io1": {"storage_per_gib_month": "0.135", "included_iops": 0, "iops_per_month": "0.065"},
+      "io2": {"storage_per_gib_month": "0.135", "included_iops": 0, "iops_tiers": [{"up_to": 32000, "price_per_iops_month": "0.065"}, {"up_to": 32000, "price_per_iops_month": "0.046"}, {"up_to": null, "price_per_iops_month": "0.032"}]},
+      "st1": {"storage_per_gib_month": "0.050"},
+      "sc1": {"storage_per_gib_month": "0.017"},
+      "standard": {"storage_per_gib_month": "0.055"}
+    }},
+    "eu-west-1": {"volume_types": {
+      "gp2": {"storage_per_gib_month": "0.115"},
+      "gp3": {"storage_per_gib_month": "0.092", "included_iops": 3000, "iops_per_month": "0.005", "included_throughput_mibps": 125, "throughput_per_mibps_month": "0.040"},
+      "io1": {"storage_per_gib_month": "0.140", "included_iops": 0, "iops_per_month": "0.065"},
+      "io2": {"storage_per_gib_month": "0.140", "included_iops": 0, "iops_tiers": [{"up_to": 32000, "price_per_iops_month": "0.065"}, {"up_to": 32000, "price_per_iops_month": "0.046"}, {"up_to": null, "price_per_iops_month": "0.032"}]},
+      "st1": {"storage_per_gib_month": "0.052"},
+      "sc1": {"storage_per_gib_month": "0.018"},
+      "standard": {"storage_per_gib_month": "0.058"}
+    }}
+  }
+}
+
