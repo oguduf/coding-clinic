@@ -1,176 +1,126 @@
-# AWS EBS Snapshot Automation and Retention
+# Multi-Architecture Container Security Pipeline
 
-Code Clinic Lab 5 is a modular Bash + AWS CLI v2 framework for selecting running EC2 instances tagged `Backup=true`, validating attached EBS volumes, proposing tagged snapshots, and evaluating retention. It is a code-only lab: the default mode uses synthetic fixtures and does not contact AWS.
+Code Clinic Lab 6 implements a reusable GitHub Actions supply-chain pattern for building Linux AMD64 and ARM64 images, scanning each platform image, enforcing a HIGH/CRITICAL gate, and publishing and signing by immutable digest only behind protected-branch and environment controls.
 
 ## Original assignment
 
-> Write a Bash + AWS CLI script that snapshots all EBS volumes attached to running instances tagged `Backup=true` and applies a retention policy (delete snapshots older than 30 days).
+> Create a GitHub Actions workflow (or GitLab CI) that builds a multi-arch Docker image, scans it with Trivy, signs it with Cosign, and pushes to ECR/ACR/GCR only on protected branches.
 
-This project extends that task with duplicate prevention, retention protection, structured reports, mock-based tests, and explicit execution gates.
+## Problem and architecture
 
-## Architecture
+Organizations running x86_64 and ARM64 workloads across AWS, Azure, and Google Cloud need consistent image controls without long-lived cloud keys. Pull request validation has read-only repository permissions and no cloud identity. A separately gated workflow builds each platform image and scans it before the reusable publication workflow can obtain OIDC credentials.
 
 ```mermaid
 flowchart TD
-  CLI[Bash CLI] --> CFG[Validated allowlisted config]
-  CFG --> MODE{Mode}
-  MODE -->|offline default| FX[Synthetic JSON fixtures]
-  MODE -->|explicit future use| AWS[AWS CLI v2 and caller role]
-  FX --> DISC[Running instances with exact Backup=true tag]
-  AWS --> DISC
-  DISC --> VOL[Verify attached EBS mappings and volume metadata]
-  VOL --> DUP[Check automation-owned snapshots and backup interval]
-  DUP --> PLAN[Propose backup and write audit report]
-  PLAN -->|separate explicit creation opt-in| CREATE[Create snapshot with tags atomically]
-  FX --> RET[Inspect only automation-owned snapshots]
-  AWS --> RET
-  RET --> SAFETY[Age, protection tags, minimum points, AMI and Recycle Bin checks]
-  SAFETY --> REPORT[Report-only deletion candidates]
-  REPORT -->|approval plus multiple gates| DELETE[Future authorized deletion]
+  PR[Pull request or main push] --> CI[Offline validation CI]
+  CI --> TEST[pytest, Bats, actionlint, ShellCheck, Hadolint]
+  DISPATCH[Manual candidate scan, explicit confirmation] --> AMD[Build linux/amd64 local image]
+  DISPATCH --> ARM[Build linux/arm64 local image with QEMU]
+  AMD --> TV1[Trivy OS and application vulnerability scan]
+  ARM --> TV2[Trivy OS and application vulnerability scan]
+  TV1 --> GATE[Both reports required, HIGH/CRITICAL fail]
+  TV2 --> GATE
+  GATE -. fixture tests only in this repository .-> OFFLINE[No live registry in Code Clinic CI]
+  PUSH[Protected branch push] --> AUTH{Publishing enabled + ref_protected + production Environment}
+  AUTH -->|authorized| SCAN[Per-platform build and Trivy gate]
+  SCAN --> OIDC[Short-lived provider OIDC]
+  OIDC --> REG{AWS / Azure / Google}
+  REG --> INDEX[Publish multi-platform OCI index]
+  INDEX --> DIGEST[Capture immutable digest]
+  DIGEST --> SIGN[Cosign keyless sign]
+  SIGN --> VERIFY[Verify identity and OIDC issuer]
+  AUTH -. disabled by default .-> OFFLINE
 ```
 
-This depicts intended future operation. No AWS credentials, API calls, snapshots, or deletions were used for this lab.
+The lower production path is a workflow definition only. Repository CI never authenticates to a cloud, builds/pushes a release image, or signs a registry artifact. The candidate scanner is a manual, explicitly confirmed workflow that downloads Trivy's vulnerability database; ordinary validation CI uses offline fixtures.
 
-## Features
+## Technology
 
-- Selects instances only when state is `running` and the configured backup tag matches exactly.
-- Includes root and additional EBS mappings; ignores instance-store mappings.
-- Verifies volume state, attachment, size, type, and encryption metadata before proposing backup.
-- Handles multiple configured regions, duplicate volume IDs, empty results, malformed responses, and partial region failures.
-- Uses a configurable 24-hour duplicate-prevention interval and deterministic `--reference-time` for offline testing.
-- Tags new snapshots with ownership, policy, source volume/instance, environment, and creator metadata through `TagSpecifications`.
-- Considers only completed snapshots with the automation ownership tag for retention.
-- Keeps snapshots at the exact retention boundary; a snapshot expires only when its timestamp is strictly older than the cutoff.
-- Blocks candidates with protection/hold tags, invalid metadata, AMI references, applicable Recycle Bin rules, or insufficient minimum recovery points.
-- Writes separate backup and retention JSON reports; proposals are not reported as completed actions.
+- GitHub Actions, Buildx, and QEMU build separate `linux/amd64` and `linux/arm64` local candidates.
+- Trivy scans the platform-specific local image for OS and application package vulnerabilities; HIGH and CRITICAL fail the gate.
+- Cosign keyless signing uses GitHub OIDC and signs `image@sha256:...`; verification pins both certificate identity and issuer.
+- AWS ECR uses GitHub OIDC with `configure-aws-credentials` and ECR login. Azure ACR uses `azure/login` federation. Google Artifact Registry uses Workload Identity Federation. Google Artifact Registry is the current service; legacy GCR is a distinct older registry.
+- ShellCheck, shfmt, Hadolint, actionlint, pytest, and Bats validate the project.
 
-## Repository structure
+## Repository map
 
-- `bin/ebs-backup.sh`: CLI, mode authorization, and orchestration.
-- `lib/`: config parsing, AWS/fixture adapter, discovery, snapshot creation, retention, logging, and reports.
-- `config/`: base and dev/stage/prod configuration examples.
-- `examples/`: synthetic EC2, EBS, snapshot, AMI, Recycle Bin, and report data.
-- `tests/`: Bats tests and a mock AWS CLI command.
-- `iam/`: illustrative least-privilege policy, not deployed.
-- `docs/`: architecture, security, retention, recovery, and limitations.
-- `.github/workflows/bash-ci.yml`: validation-only CI.
+`app/` contains the small HTTP demonstration service. `Dockerfile` creates a minimal non-root runtime image and OCI metadata labels. `scripts/` contains the Trivy evaluator, digest/reference validation, Cosign verification, and config validation. `config/` has disabled-by-default examples. `.github/workflows/` contains offline validation, a candidate scanner, protected publication entrypoint, and reusable publisher. `tests/fixtures/` contains synthetic reports; `docs/` describes threat controls and cloud setup.
 
-## Prerequisites and installation
+## Prerequisites
 
-Requires Bash 4.4+, AWS CLI v2 for future live modes, `jq`, and GNU `date` for UTC parsing. Tests require Bats-core, ShellCheck, and shfmt.
+For local tests: Python 3.12+, Bash, pytest, PyYAML, and optionally Bats, ShellCheck, shfmt, Hadolint, and actionlint. Docker and cloud credentials are not needed for offline tests. A candidate scan requires Docker, QEMU/Buildx, network access to Trivy's vulnerability database, and a protected branch; it still does not publish an image.
 
-On Ubuntu/Debian, install local tooling with:
+## Local validation
 
-```sh
-sudo apt-get update
-sudo apt-get install -y bash jq bats shellcheck shfmt
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[test]'
+python -m pytest -q
+python scripts/validate_config.py config/pipeline.example.yaml
+bats tests/*.bats
+shellcheck scripts/*.sh
+shfmt -d scripts/*.sh
+actionlint
+hadolint Dockerfile
 ```
 
-No Python package, AWS credential, cloud account, or infrastructure deployment is needed.
+To evaluate fixtures directly:
 
-## Offline CLI usage
-
-Run from the repository root. All documented lab commands are offline:
-
-```sh
-# Help
-bash ./bin/ebs-backup.sh --help
-
-# Simulate snapshot selection and duplicate prevention
-bash ./bin/ebs-backup.sh --mode offline --action backup --fixtures examples/ \
-  --reference-time 2026-11-05T12:00:00Z
-
-# Analyze managed snapshot retention
-bash ./bin/ebs-backup.sh --mode offline --action retention --retention-days 30 \
-  --fixtures examples/ --reference-time 2026-11-05T12:00:00Z
-
-# Combined run and a combined machine-readable report
-bash ./bin/ebs-backup.sh --mode offline --action all --fixtures examples/ \
-  --reference-time 2026-11-05T12:00:00Z --output reports/combined-summary.json
-
-# Load an allowlisted configuration file (the file is parsed, never sourced)
-bash ./bin/ebs-backup.sh --config config/backup.example.conf --action all --fixtures examples/
+```bash
+bash scripts/evaluate-trivy.sh \
+  --amd64 tests/fixtures/trivy-clean-amd64.json \
+  --arm64 tests/fixtures/trivy-clean-arm64.json \
+  --summary /tmp/security-summary.json
 ```
 
-The run writes `reports/backup-summary.json` and `reports/retention-summary.json`. `--output` additionally writes a combined report. Offline mode refuses mutation calls even if code accidentally reaches the AWS adapter.
+The script exits `0` only when both valid scan reports pass, `1` for missing, malformed, or violating reports, and `2` for invalid invocation or policy. It emits a JSON summary. The evaluator counts severities across Trivy result entries and treats absent/malformed architecture reports as failure.
 
-### Configuration
+## Build and scan design
 
-Configuration supports `AWS_REGIONS`, `BACKUP_TAG_KEY`, `BACKUP_TAG_VALUE`, `RETENTION_DAYS`, `MIN_RECOVERY_POINTS`, `BACKUP_INTERVAL_HOURS`, `MANAGED_BY_TAG`, `BACKUP_POLICY_TAG`, `EXECUTION_MODE`, safety flags, `REPORT_DIRECTORY`, `LOG_LEVEL`, `ENVIRONMENT`, and `REFERENCE_TIME`. The parser accepts only known simple assignments and quoted arrays; it does not evaluate shell expressions. Still use only trusted configuration files.
+Buildx emits each platform as a local single-platform image, separately tagged with the source SHA and architecture. QEMU enables ARM64 emulation on an AMD64 hosted runner. Trivy scans that architecture-specific image; the workflow does not claim that scanning one OCI index or runner-native image covers both architectures. The reusable publishing flow rebuilds the OCI multi-platform index from the same commit after the scan gate. Because base image tags and build tooling can change between jobs, this does not prove the published bytes exactly match the scanned candidates. Pin all base images by digest and promote a previously scanned artifact by digest when exact artifact identity is required. A staging registry can provide that stronger design, but is intentionally not used here.
 
-Defaults: exact `Backup=true`, 30-day retention, 24-hour duplicate interval, one remaining recovery point per source volume, offline mode, dry-run, and no creation/deletion permission. Negative/invalid periods, malformed regions, unsupported modes, and contradictory mutation flags are rejected.
+Trivy version is set in the candidate scanner image reference. Database update occurs only in that explicitly invoked scanner workflow. Keep the vulnerability DB fresh for operational scans; record the timestamp and DB metadata with scan results. The exception ledger example is not automatically applied to scans: translate only approved exceptions into Trivy ignore-file syntax as a reviewed change, with owner, rationale, tracking issue, and expiration. No ignore rule is active by default.
 
-### Future authorized live modes
+## Signing and verification
 
-The live paths are implemented but were not executed. Discovery is read-only. Snapshot creation requires all of:
+After publishing, the reusable workflow reads Buildx's immutable digest output and signs `REGISTRY/REPOSITORY/IMAGE@sha256:DIGEST` with keyless Cosign. It then verifies the signature with the configured certificate identity and `https://token.actions.githubusercontent.com` issuer. Registry support for Cosign OCI signature artifacts must be checked for the chosen provider. The offline fixtures test input validation and gate behavior; they do not simulate a live signature or registry.
 
-```sh
-bash ./bin/ebs-backup.sh --mode live-snapshot --action backup --execute \
-  --allow-snapshot-creation --config config/dev.example.conf
-```
+## Cloud configuration
 
-Cleanup has additional gates and an operator-controlled governance assertion:
+All registries and publishing are disabled by default. The example account, tenant, subscription, registry, and project values are synthetic or reserved documentation placeholders. An authorized administrator must create cloud-side federated trust and configure GitHub repository variables and the `production-publish` Environment outside this project. Do not add static access keys.
 
-```sh
-AWS_EBS_CLEANUP_APPROVED=true bash ./bin/ebs-backup.sh --mode live-cleanup \
-  --action retention --execute --allow-snapshot-deletion \
-  --confirm-deletion DELETE-MANAGED-EBS-SNAPSHOTS --config config/dev.example.conf
-```
+- **AWS ECR:** configure `AWS_PUBLISH_ROLE_ARN`, `AWS_REGION`, `REGISTRY_HOST`, and `REGISTRY_REPOSITORY`; scope the role to only the intended ECR repository. Required push permissions include authorization token and image layer/manifest upload operations.
+- **Azure ACR:** configure `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_REGISTRY_NAME`, and registry host/repository variables. Federated credential subject must match this repository and protected Environment; grant only the registry push role.
+- **Google Artifact Registry:** configure `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_PUBLISHER_SERVICE_ACCOUNT`, `GAR_HOST`, registry host/repository variables. Restrict the pool provider condition to this repository, protected ref, and Environment; grant Artifact Registry Writer only on the required repository.
 
-These examples are not lab commands. Do not use them without explicit account authorization, change approval, reviewed IAM, restore testing, and governance checks. The cleanup variable asserts the operator has reviewed compliance/legal holds, recovery-point requirements, Recycle Bin applicability, and organizational policy. The program cannot prove every account-level constraint.
+Provider authentication actions in the example must be maintained at reviewed immutable commit SHAs. Cloud organization policies and federated trust policies remain the final identity boundary.
 
-## Discovery and backup behavior
+## Protected branch and publication safety
 
-The program uses paginated `describe-instances` filters for running state and the configured tag, then locally verifies both. It collects instance name, region, AZ, environment, policy tag, and unique EBS volume IDs. `describe-volumes` metadata must confirm an in-use volume attached to that instance, positive size, volume type, and encryption state. Missing/invalid metadata produces an error and prevents that volume from becoming a snapshot proposal.
+The publication entrypoint requires an authorized push or separately confirmed dispatch, `github.ref_protected`, an explicit `PUBLISHING_ENABLED=true` repository variable, and the `production-publish` Environment. A branch called `main` is not automatically protected. Administrators must configure branch protection/rulesets, Environment branch restrictions and required reviewers, and cloud OIDC trust constraints. Pull requests and forks do not receive `id-token: write`; only the publishing reusable job has it. Manual dispatch alone is insufficient.
 
-Before proposing a snapshot, managed completed snapshots are matched by `SourceVolumeId`. A recent point younger than the configured interval causes a skip with the existing snapshot ID and reason. The exact interval boundary is eligible for a new proposal. Concurrent runs can still race; production should use a distributed lock or single-writer orchestrator.
+Validation CI has only `contents: read`. No `pull_request_target` is used. Action references are pinned to full commit SHAs. Workflows use timeouts and concurrency controls. Do not share untrusted caches or artifacts with publishing jobs; isolate trusted publishing runners and review workflow changes as privileged code.
 
-Proposed snapshot tags include `ManagedBy`, `BackupPolicy`, `SourceVolumeId`, `SourceInstanceId`, `Environment`, and `CreatedBy`. Tags are passed in the create request so ownership is attached atomically. The report distinguishes `planned` from `created` and only the live API response can count as created.
+## Repeatability and release safety
 
-## Retention and safety behavior
+Container publication is not Terraform-style reconciliation. A commit-SHA tag aids traceability, while the digest is the artifact identity. Re-running may rebuild different bytes if base images, package indexes, timestamps, or builder versions changed. Configure registry tag immutability, treat digest signing as repeatable for the same digest, and make duplicate signatures safe to verify. Limit concurrent publication per repository/ref. Promote images across environments by digest rather than rebuilding by mutable tag. Do not claim bit-for-bit reproducibility without verifying every input.
 
-Retention evaluates only current-account snapshots returned by `describe-snapshots --owner-ids self` and tagged with the configured automation owner. Unmanaged snapshots are ignored. A candidate must be completed, have valid ownership/source/time metadata, be strictly older than the cutoff, not have `BackupProtected=true`, `ComplianceHold=true`, `LegalHold=true`, or `RetentionExempt=true`, and leave the configured minimum count of completed recovery points.
+## CI checks
 
-The CLI also checks AMI block-device references and EBS snapshot Recycle Bin rules; inability to complete either check blocks the candidate. Matching Recycle Bin rules are conservatively surfaced for operator review. The script does not claim AMI checks alone guarantee deletion safety. Read-only AWS CLI requests use standard retries, while snapshot creation and deletion use a single attempt to avoid blind retries of non-idempotent mutations. Deletions are gated and rechecked immediately before use. A race can remain between final check and API action, which is why production needs serialization and account-level controls.
-
-Expired snapshots may appear both in the expired list and in protected snapshots so the report shows age and the reason deletion is blocked. `deletion_candidates` are proposals; only `snapshots_deleted` means AWS accepted a delete request.
-
-## Logging and reports
-
-Logs are JSON lines with UTC timestamp, level, action, region, instance, volume, snapshot, result, and a safe message. No credential or secret values are logged. Reports include selection totals, proposed/created/skipped snapshots, retention decisions, protected points, candidates, completed deletes, and errors. Offline reports always say `mutations_executed: false`.
-
-Example report shapes are in `examples/backup-report.example.json` and `examples/retention-report.example.json`.
-
-## IAM security
-
-The example policy separates read-only discovery from create/tag/delete actions. Several EC2 Describe APIs require `Resource: "*"`; that exception is isolated and documented. Snapshot creation/deletion uses snapshot and volume ARNs plus ownership-tag conditions where supported. Recycle Bin rule inspection needs `rbin:ListRules`. Replace the synthetic example account ID and validate exact action/resource support for the target environment. Prefer separate discovery and mutation roles, temporary credentials, narrow regions, and organizational SCPs.
-
-## Idempotency and recovery considerations
-
-Repeated offline runs with the same fixtures and `--reference-time` produce equivalent reports without modifying fixtures. Live duplicate checks are not a distributed lock. EBS snapshots are incremental after the initial snapshot, and deleting an older snapshot does not necessarily remove blocks used by later snapshots. Snapshot retention does not guarantee an RPO. Individual snapshots are not automatically application-consistent; databases and multi-volume applications need coordination. Test recovery and KMS access before enabling any cleanup.
-
-AWS Backup or Amazon Data Lifecycle Manager may be preferable for managed scheduling, lifecycle, governance, and audit. EventBridge, SSM, cross-region copies, notifications, monitoring, and compliance reporting are future enhancements only and are not provisioned here.
-
-## Testing and CI
-
-```sh
-bash -n bin/ebs-backup.sh lib/*.sh tests/helpers/mock_aws.sh
-shellcheck -x bin/ebs-backup.sh lib/*.sh tests/helpers/mock_aws.sh
-shfmt -d -i 2 -ci bin lib tests
-bats tests
-```
-
-All AWS interactions in tests are mocked. Tests cover eligibility, EBS mapping/volume checks, multi-region fixtures, duplicate prevention, tag specifications, retention boundary, protected and AMI-referenced snapshots, offline no-AWS behavior, bad configuration, and cleanup gates. GitHub Actions installs validation tools and runs only offline tests and JSON validation; it has read-only repository permissions and no AWS credentials/OIDC, schedule, deployment, snapshot, or deletion job.
+`.github/workflows/ci-validation.yml` runs on PRs and main pushes. It has no cloud login, OIDC permission, image push, or signing. It validates application/config behavior, security and workflow contracts, shell scripts, Dockerfile conventions, and workflow syntax. The manual candidate scanner is separate and requires an explicit boolean confirmation on a protected ref.
 
 ## Troubleshooting
 
-- **No eligible instances:** verify exact tag key/value and running state in fixture or approved account.
-- **Volume skipped:** inspect block-device EBS mappings, attachment state, and `describe-volumes` metadata.
-- **Duplicate skipped:** inspect completed managed snapshots tagged with the same source volume and the backup interval.
-- **Expired but protected:** use the report reason; check hold tags, minimum recovery-point count, AMI references, and Recycle Bin rules.
-- **Live mode blocked:** satisfy every explicit mode/execute/allow/confirmation gate; do not remove safeguards to silence the error.
-- **Malformed fixture:** validate JSON with `jq`; errors are included in reports and result in a nonzero exit.
+- **Buildx/QEMU errors:** inspect the selected runner architecture and setup-QEMU logs; test each platform separately.
+- **ARM64 failures:** ensure the build does not assume an x86-only binary and that native dependencies support aarch64.
+- **Trivy findings or unavailable DB:** confirm scanner version, database freshness, architecture-specific tag, and report path. Missing reports fail closed.
+- **Cosign verify failure:** confirm the image digest, registry signature artifact support, expected GitHub workflow identity, and OIDC issuer.
+- **OIDC denied:** check cloud federated subject/issuer/audience conditions, protected ref, repository variables, and Environment approval.
+- **Registry push denied:** verify least-privilege repository-scoped permissions and correct hostname/repository values.
+- **Publication skipped:** verify branch protection status, `PUBLISHING_ENABLED`, provider configuration, event type, and Environment restrictions.
+- **Unsupported registry:** only `aws`, `azure`, and `gcp` are accepted by the protected publication gate.
 
-## Limitations
+## Limitations and future work
 
-No AWS account was accessed, no credentials were configured, and no EC2/EBS/IAM resource was created, modified, or deleted. Synthetic fixtures cannot validate actual AWS API behavior or IAM evaluation. The tool has no distributed lock, no application quiescing, and cannot discover every external compliance or recovery dependency. Snapshot consistency, Recycle Bin retention, KMS permissions, legal holds, and restore readiness still need production-specific review.
+This lab does not authenticate to AWS, Azure, or Google Cloud; create cloud resources; push images; create live registry signatures; or modify GitHub settings. It has not verified live cloud authentication or signing. Publishing is disabled by default and must remain disabled in a Code Clinic checkout. Offline tests do not prove end-to-end cloud behavior. For stronger supply-chain evidence, add SBOM generation, SLSA provenance with a verified builder, in-toto attestations, admission policy, and digest-based promotion. A provenance file alone does not make a build SLSA compliant.

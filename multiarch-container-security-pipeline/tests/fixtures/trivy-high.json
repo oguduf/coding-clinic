@@ -1,0 +1,1 @@
+{"SchemaVersion":2,"Results":[{"Target":"app","Class":"lang-pkgs","Type":"pip","Vulnerabilities":[{"VulnerabilityID":"CVE-2099-0002","Severity":"HIGH"}]}]}

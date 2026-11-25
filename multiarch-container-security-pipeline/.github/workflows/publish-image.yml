@@ -1,0 +1,45 @@
+name: Protected multi-cloud image publication
+on:
+  push:
+    branches: [main, "release/**"]
+  workflow_dispatch:
+    inputs:
+      confirm_publish:
+        description: Explicitly authorize publication after review
+        type: boolean
+        required: true
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: publish-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  authorize:
+    if: >-
+      vars.PUBLISHING_ENABLED == 'true' && github.ref_protected &&
+      ((github.event_name == 'push') ||
+       (github.event_name == 'workflow_dispatch' && inputs.confirm_publish == true))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - name: Require configured registry provider
+        env:
+          PROVIDER: ${{ vars.REGISTRY_PROVIDER }}
+        run: |
+          case "$PROVIDER" in aws|azure|gcp) ;; *) echo 'REGISTRY_PROVIDER must be aws, azure, or gcp' >&2; exit 1 ;; esac
+  publish:
+    needs: authorize
+    if: needs.authorize.result == 'success'
+    uses: ./.github/workflows/reusable-container-build.yml
+    with:
+      registry_provider: ${{ vars.REGISTRY_PROVIDER }}
+      image_name: sample-container-app
+      image_tag: sha-${{ github.sha }}
+      source_sha: ${{ github.sha }}
+      manual_authorized: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm_publish == true }}
+    permissions:
+      contents: read
+      id-token: write

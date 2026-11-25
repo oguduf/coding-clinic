@@ -1,4 +1,0 @@
-reports/*.json
-!reports/*.example.json
-*.log
-.DS_Store
