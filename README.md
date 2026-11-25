@@ -27,15 +27,6 @@ The labs cover reusable infrastructure, automation, security, CI/CD, Kubernetes,
 
 Select a branch in the catalog to read its full problem statement, architecture, prerequisites, usage examples, tests, and security notes.
 
-To check out a lab locally:
-
-```bash
-git fetch origin
-git switch --track origin/problem-14
-```
-
-Replace `problem-14` with the branch you want to review. If you already have that local branch, run `git switch problem-14`.
-
 ## Main branch
 
 The `main` branch provides this portfolio index. Each lab's source files and detailed instructions remain on its corresponding `problem-N` branch.
